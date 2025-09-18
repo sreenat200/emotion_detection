@@ -8,6 +8,7 @@ from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from transformers import pipeline
+import time
 
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(self, num_classes=7, in_channels=1):
@@ -83,10 +84,12 @@ with st.sidebar:
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)  # Default to Low for better performance
-    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15 for better performance
-    detect_age_gender = st.checkbox("Detect Age and Gender", value=False)  # Default to False to reduce load
-    skip_frames = st.slider("Process Every Nth Frame", min_value=1, max_value=5, value=2)  # New: Allow user to set frame skipping
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)  # Default to Low
+    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15 FPS
+    detect_age_gender = st.checkbox("Detect Age and Gender", value=False)  # Default to False
+    skip_frames = st.slider("Process Every Nth Frame (Emotion)", min_value=1, max_value=5, value=2)
+    age_gender_skip = st.slider("Process Every Nth Frame (Age/Gender)", min_value=1, max_value=10, value=5)  # New: Skip frames for age/gender
+    age_gender_cache_duration = st.slider("Cache Age/Gender Results (seconds)", min_value=1, max_value=10, value=3)  # New: Cache duration
 
 quality_map = {
     "High (1080p)": {"width": 1920, "height": 1080},
@@ -106,7 +109,7 @@ def load_facial_emotion_model():
         model = model.from_pretrained("sreenathsree1578/facial_emotion")
         model.eval()
         if torch.cuda.is_available():
-            model = model.cuda()  # Use GPU if available
+            model = model.cuda()
         return model, 1
     except Exception as e:
         st.error(f"Error loading facial_emotion: {str(e)}. Using default.")
@@ -123,7 +126,7 @@ def load_emotion_detection_model():
         model = model.from_pretrained("sreenathsree1578/emotion_detection")
         model.eval()
         if torch.cuda.is_available():
-            model = model.cuda()  # Use GPU if available
+            model = model.cuda()
         return model, 3
     except Exception as e:
         st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
@@ -132,7 +135,7 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_gender_pipeline():
     try:
-        pipe = pipeline("image-classification", model="abhilash88/age-gender-prediction", trust_remote_code=True)
+        pipe = pipeline("image-classification", model="abhilash88/age-gender-prediction", trust_remote_code=True, device=0 if torch.cuda.is_available() else -1)
         return pipe
     except Exception as e:
         st.error(f"Error loading age/gender pipeline: {str(e)}. Disabling.")
@@ -160,16 +163,27 @@ class EmotionProcessor(VideoProcessorBase):
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.frame_count = 0
-        self.skip_frames = skip_frames  # Use user-selected skip value
+        self.age_gender_frame_count = 0
+        self.skip_frames = skip_frames
+        self.age_gender_skip = age_gender_skip
+        self.age_gender_cache = {}  # Cache for age/gender results
+        self.cache_duration = age_gender_cache_duration
+        self.last_update_time = time.time()
 
     def recv(self, frame):
         self.frame_count += 1
         if self.frame_count % self.skip_frames != 0:
-            return frame  # Skip processing for some frames to reduce load
+            return frame  # Skip processing for some frames
 
         img = frame.to_ndarray(format="bgr24")
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+
+        current_time = time.time()
+        # Clear cache if duration exceeded
+        if current_time - self.last_update_time > self.cache_duration:
+            self.age_gender_cache.clear()
+            self.last_update_time = current_time
 
         for (x, y, w, h) in faces:
             face_rgb = cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB)
@@ -178,7 +192,7 @@ class EmotionProcessor(VideoProcessorBase):
             face_pil = Image.fromarray(face if in_channels == 3 else np.stack([face]*3, axis=-1), mode='RGB')
             face_tensor = transform_live(face_pil).unsqueeze(0)
             if torch.cuda.is_available():
-                face_tensor = face_tensor.cuda()  # Move to GPU if available
+                face_tensor = face_tensor.cuda()
             with torch.no_grad():
                 output = model(face_tensor)
                 _, pred = torch.max(output, 1)
@@ -190,13 +204,28 @@ class EmotionProcessor(VideoProcessorBase):
             cv2.putText(img, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
             if detect_age_gender and age_gender_pipe:
-                pil_face = Image.fromarray(face_rgb)
-                result = age_gender_pipe(pil_face)
-                age = result[0]['age']
-                gender = result[0]['gender']
-                age_text_size = cv2.getTextSize(f"{age} {gender}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                cv2.rectangle(img, (x, y+h+5), (x+age_text_size[0], y+h+35), (255, 255, 255), -1)
-                cv2.putText(img, f"{age} {gender}", (x, y+h+25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                face_key = f"{x}_{y}_{w}_{h}"  # Unique key for face
+                if face_key in self.age_gender_cache:
+                    age, gender = self.age_gender_cache[face_key]
+                else:
+                    self.age_gender_frame_count += 1
+                    if self.age_gender_frame_count % self.age_gender_skip == 0:
+                        try:
+                            pil_face = Image.fromarray(face_rgb)
+                            result = age_gender_pipe(pil_face)
+                            age = result[0]['age']
+                            gender = result[0]['gender']
+                            self.age_gender_cache[face_key] = (age, gender)
+                        except Exception as e:
+                            age, gender = "Unknown", "Unknown"
+                            st.warning(f"Age/gender detection failed: {str(e)}")
+                    else:
+                        age, gender = "Processing", "Processing"
+
+                if age and gender:
+                    age_text_size = cv2.getTextSize(f"{age} {gender}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    cv2.rectangle(img, (x, y+h+5), (x+age_text_size[0], y+h+35), (255, 255, 255), -1)
+                    cv2.putText(img, f"{age} {gender}", (x, y+h+25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
         return frame.from_ndarray(img, format="bgr24")
 
