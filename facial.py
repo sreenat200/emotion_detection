@@ -7,8 +7,8 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-import requests
-import os
+from transformers import AutoImageProcessor, AutoModelForImageClassification
+import warnings
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -74,9 +74,9 @@ def get_transform(in_channels):
         transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
     ])
 
-# Define labels for age and gender (Caffe model outputs)
+# Define labels for age and gender (from HF models)
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-ages = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
+ages = ['age 01-10', 'age 11-20', 'age 21-30', 'age 31-40', 'age 41-55', 'age 56-65', 'age 66-80', 'age 80 +']
 genders = ['Male', 'Female']
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
@@ -90,46 +90,6 @@ with st.sidebar:
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
     fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
-
-    # Download button for models
-    if st.button("Download Age and Gender Models"):
-        with st.spinner("Downloading models..."):
-            try:
-                # Age prototxt
-                age_proto_url = "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/deploy_age2.prototxt"
-                age_proto_path = "age_deploy.prototxt"
-                response = requests.get(age_proto_url)
-                with open(age_proto_path, 'wb') as f:
-                    f.write(response.content)
-                st.success(f"Downloaded {age_proto_path}")
-
-                # Age caffemodel
-                age_model_url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/age_net.caffemodel"
-                age_model_path = "age_net.caffemodel"
-                response = requests.get(age_model_url)
-                with open(age_model_path, 'wb') as f:
-                    f.write(response.content)
-                st.success(f"Downloaded {age_model_path}")
-
-                # Gender prototxt
-                gender_proto_url = "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/deploy_gender.prototxt"
-                gender_proto_path = "gender_deploy.prototxt"
-                response = requests.get(gender_proto_url)
-                with open(gender_proto_path, 'wb') as f:
-                    f.write(response.content)
-                st.success(f"Downloaded {gender_proto_path}")
-
-                # Gender caffemodel
-                gender_model_url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/gender_net.caffemodel"
-                gender_model_path = "gender_net.caffemodel"
-                response = requests.get(gender_model_url)
-                with open(gender_model_path, 'wb') as f:
-                    f.write(response.content)
-                st.success(f"Downloaded {gender_model_path}")
-
-                st.info("Models downloaded successfully! Restart the app to load them.")
-            except Exception as e:
-                st.error(f"Download failed: {str(e)}")
 
 quality_map = {
     "High (1080p)": {"width": 1920, "height": 1080},
@@ -171,42 +131,34 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_detection_model():
     try:
-        age_prototxt = "age_deploy.prototxt"
-        age_caffemodel = "age_net.caffemodel"
-        if not os.path.exists(age_prototxt) or not os.path.exists(age_caffemodel):
-            st.warning("Age model files not found. Please download them using the sidebar button.")
-            return None
-        model = cv2.dnn.readNet(age_caffemodel, age_prototxt)
-        model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        return model
+        model_name = "prithivMLmods/facial-age-detection"
+        processor = AutoImageProcessor.from_pretrained(model_name)
+        model = AutoModelForImageClassification.from_pretrained(model_name)
+        model.eval()
+        return model, processor
     except Exception as e:
         st.error(f"Error loading age_detection model: {str(e)}. Age detection disabled.")
-        return None
+        return None, None
 
 @st.cache_resource
 def load_gender_detection_model():
     try:
-        gender_prototxt = "gender_deploy.prototxt"
-        gender_caffemodel = "gender_net.caffemodel"
-        if not os.path.exists(gender_prototxt) or not os.path.exists(gender_caffemodel):
-            st.warning("Gender model files not found. Please download them using the sidebar button.")
-            return None
-        model = cv2.dnn.readNet(gender_caffemodel, gender_prototxt)
-        model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        return model
+        model_name = "prithivMLmods/Gender-Classifier-Mini"
+        processor = AutoImageProcessor.from_pretrained(model_name)
+        model = AutoModelForImageClassification.from_pretrained(model_name)
+        model.eval()
+        return model, processor
     except Exception as e:
         st.error(f"Error loading gender_detection model: {str(e)}. Gender detection disabled.")
-        return None
+        return None, None
 
 # Load models
 if model_option == "sreenathsree1578/facial_emotion":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_model = load_age_detection_model()
-gender_model = load_gender_detection_model()
+age_model, age_processor = load_age_detection_model()
+gender_model, gender_processor = load_gender_detection_model()
 
 transform_live = get_transform(in_channels)
 
@@ -220,22 +172,19 @@ emotion_colors = {
     'neutral': (255, 0, 0)
 }
 age_colors = {
-    '(0-2)': (255, 255, 0),
-    '(4-6)': (255, 200, 0),
-    '(8-12)': (255, 165, 0),
-    '(15-20)': (255, 100, 0),
-    '(25-32)': (200, 0, 200),
-    '(38-43)': (150, 0, 150),
-    '(48-53)': (100, 0, 100),
-    '(60-100)': (0, 128, 128)
+    'age 01-10': (255, 255, 0),
+    'age 11-20': (255, 200, 0),
+    'age 21-30': (255, 165, 0),
+    'age 31-40': (255, 100, 0),
+    'age 41-55': (200, 0, 200),
+    'age 56-65': (150, 0, 150),
+    'age 66-80': (100, 0, 100),
+    'age 80 +': (0, 128, 128)
 }
 gender_colors = {
     'Male': (0, 0, 255),
     'Female': (255, 0, 255)
 }
-
-# Mean values for age and gender model preprocessing
-MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
 
 class EmotionProcessor(VideoProcessorBase):
     def __init__(self):
@@ -250,31 +199,35 @@ class EmotionProcessor(VideoProcessorBase):
             # Emotion detection (PyTorch)
             face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
             face_emotion = cv2.resize(face_emotion, (48, 48))
-            face_emotion = transform_live(Image.fromarray(face_emotion if in_channels == 3 else face_emotion, mode='RGB' if in_channels == 3 else 'L')).unsqueeze(0)
+            face_emotion_pil = Image.fromarray(face_emotion if in_channels == 3 else face_emotion, mode='RGB' if in_channels == 3 else 'L')
+            face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
             with torch.no_grad():
-                output_emotion = emotion_model(face_emotion)
+                output_emotion = emotion_model(face_emotion_tensor)
                 _, pred_emotion = torch.max(output_emotion, 1)
                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-            # Prepare face for age and gender (OpenCV DNN)
-            face = img[y:y+h, x:x+w]
-            face_blob = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+            # Prepare face for age and gender (HF Transformers)
+            face_pil = Image.fromarray(cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB))
 
             # Age detection
             age = "unknown"
-            if age_model is not None:
-                age_model.setInput(face_blob)
-                age_pred = age_model.forward()
-                age_idx = age_pred[0].argmax()
-                age = ages[age_idx] if age_idx < len(ages) else "unknown"
+            if age_model is not None and age_processor is not None:
+                inputs_age = age_processor(face_pil, return_tensors="pt")
+                with torch.no_grad():
+                    outputs_age = age_model(**inputs_age)
+                    predictions_age = torch.nn.functional.softmax(outputs_age.logits, dim=-1)
+                    pred_age_idx = predictions_age.argmax(-1).item()
+                    age = ages[pred_age_idx]
 
             # Gender detection
             gender = "unknown"
-            if gender_model is not None:
-                gender_model.setInput(face_blob)
-                gender_pred = gender_model.forward()
-                gender_idx = gender_pred[0].argmax()
-                gender = genders[gender_idx] if gender_idx < len(genders) else "unknown"
+            if gender_model is not None and gender_processor is not None:
+                inputs_gender = gender_processor(face_pil, return_tensors="pt")
+                with torch.no_grad():
+                    outputs_gender = gender_model(**inputs_gender)
+                    predictions_gender = torch.nn.functional.softmax(outputs_gender.logits, dim=-1)
+                    pred_gender_idx = predictions_gender.argmax(-1).item()
+                    gender = genders[pred_gender_idx]
 
             # Draw rectangle for face
             cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
