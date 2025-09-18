@@ -83,9 +83,10 @@ with st.sidebar:
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
-    fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
-    detect_age_gender = st.checkbox("Detect Age and Gender", value=True)
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)  # Default to Low for better performance
+    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15 for better performance
+    detect_age_gender = st.checkbox("Detect Age and Gender", value=False)  # Default to False to reduce load
+    skip_frames = st.slider("Process Every Nth Frame", min_value=1, max_value=5, value=2)  # New: Allow user to set frame skipping
 
 quality_map = {
     "High (1080p)": {"width": 1920, "height": 1080},
@@ -104,6 +105,8 @@ def load_facial_emotion_model():
         model = SimpleCNN(num_classes=num_classes, in_channels=1)
         model = model.from_pretrained("sreenathsree1578/facial_emotion")
         model.eval()
+        if torch.cuda.is_available():
+            model = model.cuda()  # Use GPU if available
         return model, 1
     except Exception as e:
         st.error(f"Error loading facial_emotion: {str(e)}. Using default.")
@@ -119,6 +122,8 @@ def load_emotion_detection_model():
         model = EmotionDetectionCNN(num_classes=num_classes, in_channels=3)
         model = model.from_pretrained("sreenathsree1578/emotion_detection")
         model.eval()
+        if torch.cuda.is_available():
+            model = model.cuda()  # Use GPU if available
         return model, 3
     except Exception as e:
         st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
@@ -154,8 +159,14 @@ age_gender_pipe = load_age_gender_pipeline() if detect_age_gender else None
 class EmotionProcessor(VideoProcessorBase):
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.frame_count = 0
+        self.skip_frames = skip_frames  # Use user-selected skip value
 
     def recv(self, frame):
+        self.frame_count += 1
+        if self.frame_count % self.skip_frames != 0:
+            return frame  # Skip processing for some frames to reduce load
+
         img = frame.to_ndarray(format="bgr24")
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
@@ -164,7 +175,10 @@ class EmotionProcessor(VideoProcessorBase):
             face_rgb = cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB)
             face = img[y:y+h, x:x+w] if in_channels == 3 else gray[y:y+h, x:x+w]
             face = cv2.resize(face, (48, 48))
-            face_tensor = transform_live(Image.fromarray(face if in_channels == 3 else face, mode='RGB' if in_channels == 3 else 'L')).unsqueeze(0)
+            face_pil = Image.fromarray(face if in_channels == 3 else np.stack([face]*3, axis=-1), mode='RGB')
+            face_tensor = transform_live(face_pil).unsqueeze(0)
+            if torch.cuda.is_available():
+                face_tensor = face_tensor.cuda()  # Move to GPU if available
             with torch.no_grad():
                 output = model(face_tensor)
                 _, pred = torch.max(output, 1)
@@ -199,7 +213,6 @@ try:
                 "width": {"ideal": resolution["width"]},
                 "height": {"ideal": resolution["height"]},
                 "frameRate": {"ideal": fps},
-                "deviceId": {"exact": 1}
             },
             "audio": False
         },
@@ -207,19 +220,4 @@ try:
         rtc_configuration=rtc_config
     )
 except Exception as e:
-    st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
-    webrtc_streamer(
-        key="emotion-detection-fallback",
-        video_processor_factory=EmotionProcessor,
-        media_stream_constraints={
-            "video": {
-                "width": {"ideal": resolution["width"]},
-                "height": {"ideal": resolution["height"]},
-                "frameRate": {"ideal": fps},
-                "deviceId": {"exact": 0}
-            },
-            "audio": False
-        },
-        async_processing=True,
-        rtc_configuration=rtc_config
-    )
+    st.warning(f"Default camera failed: {str(e)}. Please check your camera settings.")
