@@ -7,8 +7,8 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from transformers import AutoImageProcessor, AutoModelForImageClassification
-import warnings
+from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoModelForObjectDetection
+import torch.nn.functional as F
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -74,10 +74,10 @@ def get_transform(in_channels):
         transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
     ])
 
-# Define labels for age and gender (from HF models)
+# Define labels for age and gender (from new HF models)
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-ages = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
-genders = ['Male', 'Female']
+ages = ['MIDDLE', 'YOUNG', 'OLD']  # From dima806/faces_age_detection
+genders = ['Male', 'Female']  # From nateraw/vit-gender-classifier
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -131,7 +131,7 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_detection_model():
     try:
-        model_name = "nateraw/vit-age-classifier"
+        model_name = "dima806/faces_age_detection"
         processor = AutoImageProcessor.from_pretrained(model_name)
         model = AutoModelForImageClassification.from_pretrained(model_name)
         model.eval()
@@ -143,7 +143,7 @@ def load_age_detection_model():
 @st.cache_resource
 def load_gender_detection_model():
     try:
-        model_name = "prithivMLmods/Gender-Classifier-Mini"
+        model_name = "nateraw/vit-gender-classifier"
         processor = AutoImageProcessor.from_pretrained(model_name)
         model = AutoModelForImageClassification.from_pretrained(model_name)
         model.eval()
@@ -172,14 +172,9 @@ emotion_colors = {
     'neutral': (255, 0, 0)
 }
 age_colors = {
-    '(0-2)': (255, 255, 0),
-    '(4-6)': (255, 200, 0),
-    '(8-12)': (255, 165, 0),
-    '(15-20)': (255, 100, 0),
-    '(25-32)': (200, 0, 200),
-    '(38-43)': (150, 0, 150),
-    '(48-53)': (100, 0, 100),
-    '(60-100)': (0, 128, 128)
+    'MIDDLE': (200, 0, 200),
+    'YOUNG': (255, 165, 0),
+    'OLD': (0, 128, 128)
 }
 gender_colors = {
     'Male': (0, 0, 255),
@@ -215,7 +210,7 @@ class EmotionProcessor(VideoProcessorBase):
                 inputs_age = age_processor(face_pil, return_tensors="pt")
                 with torch.no_grad():
                     outputs_age = age_model(**inputs_age)
-                    predictions_age = torch.nn.functional.softmax(outputs_age.logits, dim=-1)
+                    predictions_age = F.softmax(outputs_age.logits, dim=-1)
                     pred_age_idx = predictions_age.argmax(-1).item()
                     age = ages[pred_age_idx]
 
@@ -225,7 +220,7 @@ class EmotionProcessor(VideoProcessorBase):
                 inputs_gender = gender_processor(face_pil, return_tensors="pt")
                 with torch.no_grad():
                     outputs_gender = gender_model(**inputs_gender)
-                    predictions_gender = torch.nn.functional.softmax(outputs_gender.logits, dim=-1)
+                    predictions_gender = F.softmax(outputs_gender.logits, dim=-1)
                     pred_gender_idx = predictions_gender.argmax(-1).item()
                     gender = genders[pred_gender_idx]
 
