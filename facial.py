@@ -8,6 +8,12 @@ from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from tensorflow import keras
+from tensorflow.keras.metrics import MeanSquaredError
+
+# Register custom MSE metric
+@keras.saving.register_keras_serializable()
+def mse(y_true, y_pred):
+    return MeanSquaredError()(y_true, y_pred)
 
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(self, num_classes=7, in_channels=1):
@@ -74,17 +80,17 @@ def get_transform(in_channels):
 
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 
-st.markdown("<h3>Live Facial Emotion Detection</h3>", unsafe_allow_html=True)
+st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Model",
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
-        index=0 
+        index=0
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)  # Default to High
-    fps = st.selectbox("Select FPS", [15, 30, 60], index=2)  
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
+    fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
     detect_age_gender = st.checkbox("Detect Age and Gender", value=True)
 
 quality_map = {
@@ -129,8 +135,8 @@ def load_age_gender_models():
     try:
         age_model_path = hf_hub_download(repo_id="Dhrumit1314/Age_and_Gender_Detection", filename="age_model_3epochs.h5")
         gender_model_path = hf_hub_download(repo_id="Dhrumit1314/Age_and_Gender_Detection", filename="gender_model_3epochs.h5")
-        age_model = keras.models.load_model(age_model_path)
-        gender_model = keras.models.load_model(gender_model_path)
+        age_model = keras.models.load_model(age_model_path, custom_objects={'mse': mse})
+        gender_model = keras.models.load_model(gender_model_path, custom_objects={'mse': mse})
         age_bins = ['(0-2)', '(2-4)', '(4-6)', '(6-8)', '(8-10)', '(10-12)', '(12-14)', '(14-16)', '(16-18)', '(18-20)', '(20-22)', '(22-24)', '(24-26)', '(26-28)', '(28-30)', '(30-32)', '(32-34)', '(34-36)', '(36-38)', '(38-40)', '(40-42)', '(42-44)', '(44-46)', '(46-48)', '(48-50)', '(50-52)', '(52-54)', '(54-56)', '(56-58)', '(58-60)', '(60-62)', '(62-64)', '(64-66)', '(66-68)', '(68-70)', '(70-72)', '(72-74)', '(74-76)', '(76-78)', '(78-80)', '(80-82)', '(82-84)', '(84-86)', '(86-88)', '(88-90)', '(90-92)', '(92-94)', '(94-96)', '(96-98)', '(98-100)', '(100-102)', '(102-104)', '(104-106)', '(106-108)', '(108-110)', '(110-112)', '(112-114)', '(114-116)', '(116-118)', '(118-120)']
         return age_model, gender_model, age_bins
     except Exception as e:
@@ -173,10 +179,10 @@ class EmotionProcessor(VideoProcessorBase):
                 output = model(face_tensor)
                 _, pred = torch.max(output, 1)
                 emotion = emotions[pred.item()] if pred.item() < len(emotions) else "unknown"
-            color = emotion_colors.get(emotion, (255, 0, 0))  
+            color = emotion_colors.get(emotion, (255, 0, 0))
             cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)
             text_size = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-            cv2.rectangle(img, (x, y-35), (x+text_size[0], y-5), (255, 255, 255), -1)  
+            cv2.rectangle(img, (x, y-35), (x+text_size[0], y-5), (255, 255, 255), -1)
             cv2.putText(img, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
             if detect_age_gender and age_model and gender_model:
@@ -189,8 +195,8 @@ class EmotionProcessor(VideoProcessorBase):
                 gender_pred = gender_model.predict(face_norm, verbose=0)
                 gender = 'Male' if np.argmax(gender_pred) == 0 else 'Female'
                 age_text_size = cv2.getTextSize(f"{age_range} {gender}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                cv2.rectangle(img, (x, y+ h + 5), (x + age_text_size[0], y + h + 35), (255, 255, 255), -1)
-                cv2.putText(img, f"{age_range} {gender}", (x, y + h + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                cv2.rectangle(img, (x, y+h+5), (x+age_text_size[0], y+h+35), (255, 255, 255), -1)
+                cv2.putText(img, f"{age_range} {gender}", (x, y+h+25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
         return frame.from_ndarray(img, format="bgr24")
 
@@ -207,7 +213,7 @@ try:
                 "width": {"ideal": resolution["width"]},
                 "height": {"ideal": resolution["height"]},
                 "frameRate": {"ideal": fps},
-                "deviceId": {"exact": 1} 
+                "deviceId": {"exact": 1}
             },
             "audio": False
         },
@@ -224,7 +230,7 @@ except Exception as e:
                 "width": {"ideal": resolution["width"]},
                 "height": {"ideal": resolution["height"]},
                 "frameRate": {"ideal": fps},
-                "deviceId": {"exact": 0}  
+                "deviceId": {"exact": 0}
             },
             "audio": False
         },
