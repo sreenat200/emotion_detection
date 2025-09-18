@@ -7,6 +7,8 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+import requests
+import os
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -72,10 +74,10 @@ def get_transform(in_channels):
         transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
     ])
 
-# Define labels for age and gender
+# Define labels for age and gender (Caffe model outputs)
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 ages = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
-genders = ['male', 'female']
+genders = ['Male', 'Female']
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -88,6 +90,46 @@ with st.sidebar:
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
     fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
+
+    # Download button for models
+    if st.button("Download Age and Gender Models"):
+        with st.spinner("Downloading models..."):
+            try:
+                # Age prototxt
+                age_proto_url = "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/deploy_age2.prototxt"
+                age_proto_path = "age_deploy.prototxt"
+                response = requests.get(age_proto_url)
+                with open(age_proto_path, 'wb') as f:
+                    f.write(response.content)
+                st.success(f"Downloaded {age_proto_path}")
+
+                # Age caffemodel
+                age_model_url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/age_net.caffemodel"
+                age_model_path = "age_net.caffemodel"
+                response = requests.get(age_model_url)
+                with open(age_model_path, 'wb') as f:
+                    f.write(response.content)
+                st.success(f"Downloaded {age_model_path}")
+
+                # Gender prototxt
+                gender_proto_url = "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/deploy_gender.prototxt"
+                gender_proto_path = "gender_deploy.prototxt"
+                response = requests.get(gender_proto_url)
+                with open(gender_proto_path, 'wb') as f:
+                    f.write(response.content)
+                st.success(f"Downloaded {gender_proto_path}")
+
+                # Gender caffemodel
+                gender_model_url = "https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/gender_net.caffemodel"
+                gender_model_path = "gender_net.caffemodel"
+                response = requests.get(gender_model_url)
+                with open(gender_model_path, 'wb') as f:
+                    f.write(response.content)
+                st.success(f"Downloaded {gender_model_path}")
+
+                st.info("Models downloaded successfully! Restart the app to load them.")
+            except Exception as e:
+                st.error(f"Download failed: {str(e)}")
 
 quality_map = {
     "High (1080p)": {"width": 1920, "height": 1080},
@@ -129,11 +171,14 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_detection_model():
     try:
-        age_prototxt = "age_deploy.prototxt"  # Update with path to file
-        age_model = "age_net.caffemodel"      # Update with path to file
-        model = cv2.dnn.readNet(age_model, age_prototxt)
+        age_prototxt = "age_deploy.prototxt"
+        age_caffemodel = "age_net.caffemodel"
+        if not os.path.exists(age_prototxt) or not os.path.exists(age_caffemodel):
+            st.warning("Age model files not found. Please download them using the sidebar button.")
+            return None
+        model = cv2.dnn.readNet(age_caffemodel, age_prototxt)
         model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)  # Use GPU if available: DNN_TARGET_CUDA
+        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         return model
     except Exception as e:
         st.error(f"Error loading age_detection model: {str(e)}. Age detection disabled.")
@@ -142,11 +187,14 @@ def load_age_detection_model():
 @st.cache_resource
 def load_gender_detection_model():
     try:
-        gender_prototxt = "gender_deploy.prototxt"  # Update with path to file
-        gender_model = "gender_net.caffemodel"      # Update with path to file
-        model = cv2.dnn.readNet(gender_model, gender_prototxt)
+        gender_prototxt = "gender_deploy.prototxt"
+        gender_caffemodel = "gender_net.caffemodel"
+        if not os.path.exists(gender_prototxt) or not os.path.exists(gender_caffemodel):
+            st.warning("Gender model files not found. Please download them using the sidebar button.")
+            return None
+        model = cv2.dnn.readNet(gender_caffemodel, gender_prototxt)
         model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)  # Use GPU if available: DNN_TARGET_CUDA
+        model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         return model
     except Exception as e:
         st.error(f"Error loading gender_detection model: {str(e)}. Gender detection disabled.")
@@ -182,8 +230,8 @@ age_colors = {
     '(60-100)': (0, 128, 128)
 }
 gender_colors = {
-    'male': (0, 0, 255),
-    'female': (255, 0, 255)
+    'Male': (0, 0, 255),
+    'Female': (255, 0, 255)
 }
 
 # Mean values for age and gender model preprocessing
