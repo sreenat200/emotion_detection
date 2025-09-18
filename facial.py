@@ -7,6 +7,7 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+import torch.nn.functional as F
 
 # Emotion Detection Model (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -181,18 +182,16 @@ def load_emotion_detection_model():
         return model, 3
     except Exception as e:
         st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
-        return SimpleCNN(num_classes=7, in_channels=1).from_pretrained("sreenathsree1578/facial_emotion"), 1
+        return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
 def load_age_detection_model():
     try:
-        config_path = hf_hub_download(repo_id="sreenathsree1578/age_detection", filename="config.json")
-        with open(config_path) as f:
-            config = json.load(f)
-        num_classes = config.get("num_classes", 4)
-        model = AgeDetectionCNN(num_classes=num_classes, in_channels=1)
-        model = model.from_pretrained("sreenathsree1578/age_detection")
+        # Use a simple default model; in practice, load weights from a URL if available
+        # For now, return untrained model - user can train it on a dataset like UTKFace
+        model = AgeDetectionCNN(num_classes=4, in_channels=1)
         model.eval()
+        st.warning("Using default untrained age model. Train on a dataset like UTKFace for accuracy.")
         return model, 1
     except Exception as e:
         st.error(f"Error loading age_detection: {str(e)}. Using default.")
@@ -201,13 +200,11 @@ def load_age_detection_model():
 @st.cache_resource
 def load_gender_detection_model():
     try:
-        config_path = hf_hub_download(repo_id="sreenathsree1578/gender_detection", filename="config.json")
-        with open(config_path) as f:
-            config = json.load(f)
-        num_classes = config.get("num_classes", 2)
-        model = GenderDetectionCNN(num_classes=num_classes, in_channels=1)
-        model = model.from_pretrained("sreenathsree1578/gender_detection")
+        # Use a simple default model; in practice, load weights from a URL if available
+        # For now, return untrained model - user can train it on a dataset like UTKFace
+        model = GenderDetectionCNN(num_classes=2, in_channels=1)
         model.eval()
+        st.warning("Using default untrained gender model. Train on a dataset like UTKFace for accuracy.")
         return model, 1
     except Exception as e:
         st.error(f"Error loading gender_detection: {str(e)}. Using default.")
