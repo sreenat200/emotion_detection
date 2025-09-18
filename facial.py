@@ -10,6 +10,7 @@ import time
 import subprocess
 import re
 import ipaddress
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
 # Define SimpleCNN architecture for emotion_detection (RGB, in_channels=3) - default to working model
 class EmotionDetectionCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -245,3 +246,4 @@ else:
                     break
 
         cap.release()
+
