@@ -8,3 +8,4 @@ numpy
 safetensors
 huggingface_hub
 tensorflow
+transformers
