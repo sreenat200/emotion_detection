@@ -7,7 +7,7 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoModelForObjectDetection
+from transformers import AutoImageProcessor, AutoModelForImageClassification
 import torch.nn.functional as F
 
 # Emotion Detection Models (unchanged)
@@ -77,7 +77,7 @@ def get_transform(in_channels):
 # Define labels for age and gender (from new HF models)
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 ages = ['MIDDLE', 'YOUNG', 'OLD']  # From dima806/faces_age_detection
-genders = ['Male', 'Female']  # From nateraw/vit-gender-classifier
+genders = ['Female', 'Male']  # From prithivMLmods/Realistic-Gender-Classification (0: female, 1: male)
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -143,7 +143,7 @@ def load_age_detection_model():
 @st.cache_resource
 def load_gender_detection_model():
     try:
-        model_name = "nateraw/vit-gender-classifier"
+        model_name = "prithivMLmods/Realistic-Gender-Classification"
         processor = AutoImageProcessor.from_pretrained(model_name)
         model = AutoModelForImageClassification.from_pretrained(model_name)
         model.eval()
@@ -177,8 +177,8 @@ age_colors = {
     'OLD': (0, 128, 128)
 }
 gender_colors = {
-    'Male': (0, 0, 255),
-    'Female': (255, 0, 255)
+    'Female': (255, 0, 255),
+    'Male': (0, 0, 255)
 }
 
 class EmotionProcessor(VideoProcessorBase):
@@ -191,10 +191,14 @@ class EmotionProcessor(VideoProcessorBase):
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
 
         for (x, y, w, h) in faces:
-            # Emotion detection (PyTorch)
+            # Emotion detection (PyTorch) - Fixed color conversion
             face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
             face_emotion = cv2.resize(face_emotion, (48, 48))
-            face_emotion_pil = Image.fromarray(face_emotion if in_channels == 3 else face_emotion, mode='RGB' if in_channels == 3 else 'L')
+            if in_channels == 3:
+                face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
+                face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
+            else:
+                face_emotion_pil = Image.fromarray(face_emotion, mode='L')
             face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
             with torch.no_grad():
                 output_emotion = emotion_model(face_emotion_tensor)
@@ -202,7 +206,8 @@ class EmotionProcessor(VideoProcessorBase):
                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
             # Prepare face for age and gender (HF Transformers)
-            face_pil = Image.fromarray(cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB))
+            face_rgb = cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB)
+            face_pil = Image.fromarray(face_rgb)
 
             # Age detection
             age = "unknown"
