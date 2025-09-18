@@ -76,7 +76,7 @@ def get_transform(in_channels):
 
 # Define labels for age and gender (from HF models)
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-ages = ['age 01-10', 'age 11-20', 'age 21-30', 'age 31-40', 'age 41-55', 'age 56-65', 'age 66-80', 'age 80 +']
+ages = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
 genders = ['Male', 'Female']
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
@@ -131,7 +131,7 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_detection_model():
     try:
-        model_name = "prithivMLmods/facial-age-detection"
+        model_name = "nateraw/vit-age-classifier"
         processor = AutoImageProcessor.from_pretrained(model_name)
         model = AutoModelForImageClassification.from_pretrained(model_name)
         model.eval()
@@ -172,14 +172,14 @@ emotion_colors = {
     'neutral': (255, 0, 0)
 }
 age_colors = {
-    'age 01-10': (255, 255, 0),
-    'age 11-20': (255, 200, 0),
-    'age 21-30': (255, 165, 0),
-    'age 31-40': (255, 100, 0),
-    'age 41-55': (200, 0, 200),
-    'age 56-65': (150, 0, 150),
-    'age 66-80': (100, 0, 100),
-    'age 80 +': (0, 128, 128)
+    '(0-2)': (255, 255, 0),
+    '(4-6)': (255, 200, 0),
+    '(8-12)': (255, 165, 0),
+    '(15-20)': (255, 100, 0),
+    '(25-32)': (200, 0, 200),
+    '(38-43)': (150, 0, 150),
+    '(48-53)': (100, 0, 100),
+    '(60-100)': (0, 128, 128)
 }
 gender_colors = {
     'Male': (0, 0, 255),
