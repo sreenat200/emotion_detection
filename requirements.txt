@@ -1,0 +1,6 @@
+opencv-python-headless
+torch
+torchvision
+huggingface_hub
+Pillow
+streamlit
