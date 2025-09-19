@@ -175,7 +175,7 @@ if model_option == "Model 1":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model("sreenathsree1578/age_gender_detection" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender")
+age_gender_model = load_age_gender_model("sreenathsree1578/age_gender_model_fairface" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender")
 
 transform_live = get_transform(in_channels)
 
