@@ -113,8 +113,6 @@ with st.sidebar:
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
         fps = st.selectbox("Select FPS", [15, 30, 60], index=0)
         mirror_feed = st.checkbox("Mirror Video Feed", value=True)
-        # Add device selection
-        device_id = st.selectbox("Select Camera Device", ["Not Selected", "Camera 1", "Camera 0"], index=0)
     else:
         mirror_snap = st.checkbox("Mirror Snap Image", value=True)
 
@@ -357,33 +355,48 @@ if mode == "Video Mode":
         "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
     })
 
-    if device_id == "Not Selected":
-        st.warning("Please select a device to continue.")
-    else:
-        device_id_map = {"Camera 1": "1", "Camera 0": "0"}
-        selected_device = device_id_map.get(device_id, "0")
-        try:
-            webrtc_streamer(
-                key="emotion-detection",
-                video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
-                media_stream_constraints={
-                    "video": {
-                        "width": {"ideal": resolution["width"]},
-                        "height": {"ideal": resolution["height"]},
-                        "frameRate": {"ideal": fps},
-                        "deviceId": {"exact": selected_device}
-                    },
-                    "audio": False
+    try:
+        webrtc_streamer(
+            key="emotion-detection",
+            video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": resolution["width"]},
+                    "height": {"ideal": resolution["height"]},
+                    "frameRate": {"ideal": fps},
+                    "deviceId": {"exact": 1}
                 },
-                async_processing=True,
-                rtc_configuration=rtc_config
-            )
-        except Exception as e:
-            if "OverconstrainedError" in str(e):
-                st.warning("Please select a device to continue.")
-            else:
-                st.error(f"Camera {selected_device} failed: {str(e)}.")
-
+                "audio": False
+            },
+            async_processing=True,
+            rtc_configuration=rtc_config
+        )
+    except Exception as e:
+        if "OverconstrainedError" in str(e):
+            st.warning("Please select a device to continue.")
+        else:
+            st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
+            try:
+                webrtc_streamer(
+                    key="emotion-detection-fallback",
+                    video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
+                    media_stream_constraints={
+                        "video": {
+                            "width": {"ideal": resolution["width"]},
+                            "height": {"ideal": resolution["height"]},
+                            "frameRate": {"ideal": fps},
+                            "deviceId": {"exact": 0}
+                        },
+                        "audio": False
+                    },
+                    async_processing=True,
+                    rtc_configuration=rtc_config
+                )
+            except Exception as e2:
+                if "OverconstrainedError" in str(e2):
+                    st.warning("Please select a device to continue.")
+                else:
+                    st.error(f"Camera 0 failed: {str(e2)}.")
 else:
     st.header("Snap Mode")
     if mirror_snap:
