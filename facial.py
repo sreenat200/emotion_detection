@@ -185,8 +185,7 @@ def process_single_image(img, mirror=False):
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
     if len(faces) == 0:
-        st.warning("No faces detected in the photo.")
-        return img
+        return img, None, None, None
 
     for (x, y, w, h) in faces:
         # Emotion detection (PyTorch)
@@ -221,28 +220,9 @@ def process_single_image(img, mirror=False):
                 age = "error"
                 gender = "error"
 
-        # Draw rectangle for face
-        cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
+        return img, emotion, age, gender
 
-        # Display emotion
-        emotion_color = emotion_colors.get(emotion, (255, 0, 0))
-        text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
-        cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
-
-        # Display age
-        age_text = f"Age: {age}"
-        text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-        cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-
-        # Display gender
-        gender_color = gender_colors.get(gender, (255, 0, 0))
-        text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
-        cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
-
-    return img
+    return img, None, None, None
 
 if mode == "Video Mode":
     resolution = quality_map[quality]
@@ -384,5 +364,22 @@ else:
         image_pil = Image.open(BytesIO(image.getvalue()))
         img_rgb = np.array(image_pil)
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-        processed = process_single_image(img_bgr, mirror=mirror_snap)
-        st.image(processed, channels="BGR", caption="Processed Photo")
+        processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
+        
+        if emotion is None or age is None or gender is None:
+            st.warning("No faces detected in the photo.")
+        else:
+            # Convert RGB colors to hexadecimal for HTML styling
+            emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
+            age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
+            gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
+            
+            # Display predictions as colored text using markdown
+            st.markdown(
+                f"""
+                **Emotion**: <span style="color: {emotion_color_hex}">{emotion}</span><br>
+                **Age**: <span style="color: {age_color_hex}">{age}</span><br>
+                **Gender**: <span style="color: {gender_color_hex}">{gender}</span>
+                """,
+                unsafe_allow_html=True
+            )
