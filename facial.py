@@ -7,8 +7,7 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from transformers import AutoImageProcessor, AutoModelForImageClassification
-import torch.nn.functional as F
+from tensorflow.keras.models import load_model
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -74,10 +73,15 @@ def get_transform(in_channels):
         transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
     ])
 
-# Define labels for age and gender (from new HF models)
+# Define labels for emotion, age, and gender
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-ages = ['MIDDLE', 'YOUNG', 'OLD']  # From dima806/faces_age_detection
-genders = ['Female', 'Male']  # From prithivMLmods/Realistic-Gender-Classification (0: female, 1: male)
+# Age is continuous (from regression), so we'll categorize it for display
+age_categories = {
+    range(0, 18): 'YOUNG',
+    range(18, 40): 'MIDDLE',
+    range(40, 120): 'OLD'
+}
+genders = ['Male', 'Female']  # 0: Male, 1: Female (from your Keras model)
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -130,36 +134,21 @@ def load_emotion_detection_model():
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
-def load_age_detection_model():
+def load_age_gender_model():
     try:
-        model_name = "dima806/faces_age_detection"
-        processor = AutoImageProcessor.from_pretrained(model_name)
-        model = AutoModelForImageClassification.from_pretrained(model_name)
-        model.eval()
-        return model, processor
+        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
+        model = load_model(model_path)
+        return model
     except Exception as e:
-        st.error(f"Error loading age_detection model: {str(e)}. Age detection disabled.")
-        return None, None
-
-@st.cache_resource
-def load_gender_detection_model():
-    try:
-        model_name = "prithivMLmods/Realistic-Gender-Classification"
-        processor = AutoImageProcessor.from_pretrained(model_name)
-        model = AutoModelForImageClassification.from_pretrained(model_name)
-        model.eval()
-        return model, processor
-    except Exception as e:
-        st.error(f"Error loading gender_detection model: {str(e)}. Gender detection disabled.")
-        return None, None
+        st.error(f"Error loading age_gender model: {str(e)}. Age and gender detection disabled.")
+        return None
 
 # Load models
 if model_option == "sreenathsree1578/facial_emotion":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_model, age_processor = load_age_detection_model()
-gender_model, gender_processor = load_gender_detection_model()
+age_gender_model = load_age_gender_model()
 
 transform_live = get_transform(in_channels)
 
@@ -173,8 +162,8 @@ emotion_colors = {
     'neutral': (255, 0, 0)
 }
 age_colors = {
-    'MIDDLE': (200, 0, 200),
     'YOUNG': (255, 165, 0),
+    'MIDDLE': (200, 0, 200),
     'OLD': (0, 128, 128)
 }
 gender_colors = {
@@ -198,7 +187,7 @@ class EmotionProcessor(VideoProcessorBase):
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
 
         for (x, y, w, h) in faces:
-            # Emotion detection (PyTorch) - Fixed color conversion
+            # Emotion detection (PyTorch)
             face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
             face_emotion = cv2.resize(face_emotion, (48, 48))
             if in_channels == 3:
@@ -212,29 +201,22 @@ class EmotionProcessor(VideoProcessorBase):
                 _, pred_emotion = torch.max(output_emotion, 1)
                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-            # Prepare face for age and gender (HF Transformers)
-            face_rgb = cv2.cvtColor(img[y:y+h, x:x+w], cv2.COLOR_BGR2RGB)
-            face_pil = Image.fromarray(face_rgb)
-
-            # Age detection
+            # Age and Gender detection (Keras)
             age = "unknown"
-            if age_model is not None and age_processor is not None:
-                inputs_age = age_processor(face_pil, return_tensors="pt")
-                with torch.no_grad():
-                    outputs_age = age_model(**inputs_age)
-                    predictions_age = F.softmax(outputs_age.logits, dim=-1)
-                    pred_age_idx = predictions_age.argmax(-1).item()
-                    age = ages[pred_age_idx]
-
-            # Gender detection
             gender = "unknown"
-            if gender_model is not None and gender_processor is not None:
-                inputs_gender = gender_processor(face_pil, return_tensors="pt")
-                with torch.no_grad():
-                    outputs_gender = gender_model(**inputs_gender)
-                    predictions_gender = F.softmax(outputs_gender.logits, dim=-1)
-                    pred_gender_idx = predictions_gender.argmax(-1).item()
-                    gender = genders[pred_gender_idx]
+            if age_gender_model is not None:
+                face_age_gender = img[y:y+h, x:x+w]
+                face_age_gender = cv2.resize(face_age_gender, (64, 64))  # Match model input size
+                face_age_gender = face_age_gender / 255.0  # Normalize
+                face_age_gender = np.expand_dims(face_age_gender, axis=0)  # Add batch dimension
+                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                age_value = int(age_pred[0][0])  # Continuous age
+                # Categorize age for display
+                for age_range, category in age_categories.items():
+                    if age_value in age_range:
+                        age = category
+                        break
+                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
 
             # Draw rectangle for face
             cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
