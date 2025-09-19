@@ -8,6 +8,8 @@ from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import mean_squared_error
+from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -137,7 +139,15 @@ def load_emotion_detection_model():
 def load_age_gender_model():
     try:
         model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
-        model = load_model(model_path)
+        # Load model with custom objects to handle 'mse' and other metrics
+        model = load_model(
+            model_path,
+            custom_objects={
+                'mse': mean_squared_error,
+                'mae': MeanAbsoluteError(),
+                'accuracy': Accuracy()
+            }
+        )
         return model
     except Exception as e:
         st.error(f"Error loading age_gender model: {str(e)}. Age and gender detection disabled.")
