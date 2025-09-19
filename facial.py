@@ -8,7 +8,7 @@ from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from tensorflow.keras.models import load_model
-from tensorflow.keras.losses import mean_squared_error
+from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
 from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 
 # Emotion Detection Models (unchanged)
@@ -91,7 +91,7 @@ with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Emotion Model",
-        ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
+        ["sreenathsree1578/facial_emotion", "sreenathsreckji1578/emotion_detection"],
         index=0 
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
@@ -143,7 +143,9 @@ def load_age_gender_model():
         model = load_model(
             model_path,
             custom_objects={
-                'mse': mean_squared_error,
+                'mse': MeanSquaredError(),  # Use class instead of function
+                'MeanSquaredError': MeanSquaredError(),
+                'binary_crossentropy': BinaryCrossentropy(),
                 'mae': MeanAbsoluteError(),
                 'accuracy': Accuracy()
             }
