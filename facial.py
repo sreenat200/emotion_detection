@@ -16,9 +16,11 @@ from collections import deque
 def get_available_cameras(max_test=10):
     available_cameras = []
     for i in range(max_test):
-        cap = cv2.VideoCapture(i)
+        cap = cv2.VideoCapture(i, cv2.CAP_ANY)
         if cap.isOpened():
             available_cameras.append(str(i))
+            cap.release()
+        else:
             cap.release()
     return available_cameras
 
@@ -98,7 +100,7 @@ with st.sidebar:
     model_option = st.selectbox(
         "Select Emotion Model",
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
-        index=0 
+        index=0
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
     fps = st.selectbox("Select FPS", [15, 30, 60], index=0)
@@ -110,7 +112,7 @@ with st.sidebar:
         camera_id = st.selectbox("Select Camera", available_cameras, index=0)
         st.write(f"Selected Camera: {camera_id}")
     else:
-        st.error("No cameras detected.")
+        st.error("No cameras detected. Please connect a camera and refresh.")
         camera_id = None
 
 quality_map = {
@@ -196,6 +198,8 @@ gender_colors = {
 class EmotionProcessor(VideoProcessorBase):
     def __init__(self, mirror=False):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        if self.face_cascade.empty():
+            st.error("Failed to load Haar Cascade classifier. Please check OpenCV installation.")
         self.mirror = mirror
         self.no_face_count = 0
         self.age_buffer = deque(maxlen=10)
@@ -203,7 +207,7 @@ class EmotionProcessor(VideoProcessorBase):
         self.last_age = "unknown"
         self.last_gender = "unknown"
         self.last_emotion = "unknown"
-        self.last_face = None  # Store last face coordinates for tracking
+        self.last_face = None
 
     def recv(self, frame):
         self.frame_count += 1
@@ -225,17 +229,15 @@ class EmotionProcessor(VideoProcessorBase):
             faces = [self.last_face] if self.last_face is not None else []
         else:
             self.no_face_count = 0
-            # Select closest face to last known position (if available)
             if self.last_face is not None:
                 last_x, last_y, last_w, last_h = self.last_face
                 last_center = (last_x + last_w // 2, last_y + last_h // 2)
                 faces = sorted(faces, key=lambda f: ((f[0] + f[2] // 2 - last_center[0]) ** 2 + (f[1] + f[3] // 2 - last_center[1]) ** 2) ** 0.5)
 
         if len(faces) > 0:
-            (x, y, w, h) = faces[0]  # Use first (or closest) face
+            (x, y, w, h) = faces[0]
             self.last_face = (x, y, w, h)
-            if self.frame_count % 3 == 0:  # Process every 3rd frame
-                # Emotion detection
+            if self.frame_count % 3 == 0:
                 face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
                 face_emotion = cv2.resize(face_emotion, (48, 48))
                 if in_channels == 3:
@@ -249,7 +251,6 @@ class EmotionProcessor(VideoProcessorBase):
                     _, pred_emotion = torch.max(output_emotion, 1)
                     emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-                # Age and Gender detection
                 age = "unknown"
                 gender = "unknown"
                 if age_gender_model is not None:
@@ -279,22 +280,15 @@ class EmotionProcessor(VideoProcessorBase):
                 gender = self.last_gender
                 emotion = self.last_emotion
 
-            # Draw rectangle for face
             cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
-
-            # Display emotion
             emotion_color = emotion_colors.get(emotion, (255, 0, 0))
             text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
             cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
-
-            # Display age
             age_text = f"Age: {age}"
             text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
             cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-
-            # Display gender
             gender_color = gender_colors.get(gender, (255, 0, 0))
             text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
@@ -324,6 +318,33 @@ if camera_id is not None:
             rtc_configuration=rtc_config
         )
     except Exception as e:
-        st.error(f"Camera {camera_id} failed: {str(e)}. Try another camera.")
+        st.error(f"Camera {camera_id} failed: {str(e)}. Try another camera or connect a webcam.")
 else:
     st.error("No camera available. Please connect a camera and refresh.")
+    st.write("Alternatively, use snapshot mode below.")
+    # Fallback to snapshot mode
+    img_file_buffer = st.camera_input("Take a picture for detection")
+    if img_file_buffer is not None:
+        bytes_data = img_file_buffer.getvalue()
+        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(gray, 1.1, 5)
+        if len(faces) > 0:
+            (x, y, w, h) = faces[0]
+            face = img[y:y+h, x:x+w]
+            face = cv2.resize(face, (64, 64))
+            face = face / 255.0
+            face = np.expand_dims(face, axis=0)
+            if age_gender_model is not None:
+                try:
+                    age_pred, gender_pred = age_gender_model.predict(face, verbose=0)
+                    age = int(age_pred[0][0])
+                    gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                    st.write(f"Predicted Age: {age}, Gender: {gender}")
+                except Exception as e:
+                    st.error(f"Prediction error: {str(e)}")
+            else:
+                st.error("Age/gender model not loaded.")
+        else:
+            st.write("No face detected in the snapshot.")
