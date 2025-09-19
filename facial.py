@@ -372,22 +372,31 @@ if mode == "Video Mode":
             rtc_configuration=rtc_config
         )
     except Exception as e:
-        st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
-        webrtc_streamer(
-            key="emotion-detection-fallback",
-            video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
-            media_stream_constraints={
-                "video": {
-                    "width": {"ideal": resolution["width"]},
-                    "height": {"ideal": resolution["height"]},
-                    "frameRate": {"ideal": fps},
-                    "deviceId": {"exact": 0}
-                },
-                "audio": False
-            },
-            async_processing=True,
-            rtc_configuration=rtc_config
-        )
+        if "OverconstrainedError" in str(e):
+            st.warning("Please select a device to continue.")
+        else:
+            st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
+            try:
+                webrtc_streamer(
+                    key="emotion-detection-fallback",
+                    video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
+                    media_stream_constraints={
+                        "video": {
+                            "width": {"ideal": resolution["width"]},
+                            "height": {"ideal": resolution["height"]},
+                            "frameRate": {"ideal": fps},
+                            "deviceId": {"exact": 0}
+                        },
+                        "audio": False
+                    },
+                    async_processing=True,
+                    rtc_configuration=rtc_config
+                )
+            except Exception as e2:
+                if "OverconstrainedError" in str(e2):
+                    st.warning("Please select a device to continue.")
+                else:
+                    st.error(f"Camera 0 failed: {str(e2)}.")
 else:
     st.header("Snap Mode")
     if mirror_snap:
