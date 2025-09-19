@@ -99,12 +99,12 @@ with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Emotion Model",
-        ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
+        ["Model 1", "Model 2"],
         index=0
     )
     age_gender_model_option = st.selectbox(
         "Select Age/Gender Model",
-        ["sreenathsree1578/age_gender_detection", "sreenathsree1578/age_gender"],
+        ["Model 1", "Model 2"],
         index=0
     )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
@@ -171,11 +171,11 @@ def load_age_gender_model(repo_id):
         return None
 
 # Load models
-if model_option == "sreenathsree1578/facial_emotion":
+if model_option == "Model 1":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model(age_gender_model_option)
+age_gender_model = load_age_gender_model("sreenathsree1578/age_gender_detection" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender")
 
 transform_live = get_transform(in_channels)
 
