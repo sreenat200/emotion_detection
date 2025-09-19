@@ -105,7 +105,7 @@ with st.sidebar:
     age_gender_model_option = st.selectbox(
         "Select Age/Gender Model",
         ["Model 1", "Model 2"],
-        index=0
+        index=1
     )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
@@ -441,4 +441,5 @@ else:
                 """,
                 unsafe_allow_html=True
             )
+
 
