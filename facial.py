@@ -88,8 +88,8 @@ with st.sidebar:
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0 
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
-    fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=1)  # Default to Medium for better performance
+    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15 for better performance
     mirror_feed = st.checkbox("Mirror Video Feed", value=True)
 
 quality_map = {
@@ -167,7 +167,7 @@ emotion_colors = {
     'surprise': (0, 255, 255),
     'neutral': (255, 0, 0)
 }
-age_color = (200, 0, 200)  # Single color for age (continuous value)
+age_color = (200, 0, 200)  # Single color for age
 gender_colors = {
     'Female': (255, 0, 255),
     'Male': (0, 0, 255)
@@ -177,6 +177,7 @@ class EmotionProcessor(VideoProcessorBase):
     def __init__(self, mirror=False):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.mirror = mirror
+        self.no_face_count = 0  # Counter for frames with no faces detected
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -186,55 +187,70 @@ class EmotionProcessor(VideoProcessorBase):
             img = cv2.flip(img, 1)
         
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
-        for (x, y, w, h) in faces:
-            # Emotion detection (PyTorch)
-            face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
-            face_emotion = cv2.resize(face_emotion, (48, 48))
-            if in_channels == 3:
-                face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
-                face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
-            else:
-                face_emotion_pil = Image.fromarray(face_emotion, mode='L')
-            face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-            with torch.no_grad():
-                output_emotion = emotion_model(face_emotion_tensor)
-                _, pred_emotion = torch.max(output_emotion, 1)
-                emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
-
-            # Age and Gender detection (Keras)
+        if len(faces) == 0:
+            self.no_face_count += 1
+            if self.no_face_count % 30 == 0:  # Log every 30 frames (~2 seconds at 15 FPS)
+                st.warning("No faces detected in the frame.")
             age = "unknown"
             gender = "unknown"
-            if age_gender_model is not None:
-                face_age_gender = img[y:y+h, x:x+w]
-                face_age_gender = cv2.resize(face_age_gender, (64, 64))  # Match model input size
-                face_age_gender = face_age_gender / 255.0  # Normalize
-                face_age_gender = np.expand_dims(face_age_gender, axis=0)  # Add batch dimension
-                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                age = f"{int(age_pred[0][0])}"  # Display continuous age as integer
-                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+            emotion = "unknown"
+        else:
+            self.no_face_count = 0  # Reset counter when faces are detected
+            for (x, y, w, h) in faces:
+                # Emotion detection (PyTorch)
+                face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
+                face_emotion = cv2.resize(face_emotion, (48, 48))
+                if in_channels == 3:
+                    face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
+                    face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
+                else:
+                    face_emotion_pil = Image.fromarray(face_emotion, mode='L')
+                face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
+                with torch.no_grad():
+                    output_emotion = emotion_model(face_emotion_tensor)
+                    _, pred_emotion = torch.max(output_emotion, 1)
+                    emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-            # Draw rectangle for face
-            cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
+                # Age and Gender detection (Keras)
+                age = "unknown"
+                gender = "unknown"
+                if age_gender_model is not None:
+                    face_age_gender = img[y:y+h, x:x+w]
+                    face_age_gender = cv2.resize(face_age_gender, (64, 64))  # Match model input size
+                    face_age_gender = face_age_gender / 255.0  # Normalize
+                    face_age_gender = np.expand_dims(face_age_gender, axis=0)  # Add batch dimension
+                    try:
+                        age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                        age_value = int(max(0, min(100, age_pred[0][0])))  # Clip age to 0-100
+                        age = f"{age_value}"
+                        gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                    except Exception as e:
+                        st.error(f"Prediction error: {str(e)}")
+                        age = "error"
+                        gender = "error"
 
-            # Display emotion
-            emotion_color = emotion_colors.get(emotion, (255, 0, 0))
-            text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
-            cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
+                # Draw rectangle for face
+                cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
 
-            # Display age (continuous)
-            age_text = f"Age: {age}"
-            text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-            cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                # Display emotion
+                emotion_color = emotion_colors.get(emotion, (255, 0, 0))
+                text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
+                cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-            # Display gender
-            gender_color = gender_colors.get(gender, (255, 0, 0))
-            text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
-            cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                # Display age (continuous)
+                age_text = f"Age: {age}"
+                text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
+                cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+
+                # Display gender
+                gender_color = gender_colors.get(gender, (255, 0, 0))
+                text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
+                cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
 
         return frame.from_ndarray(img, format="bgr24")
 
