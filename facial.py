@@ -133,7 +133,7 @@ def load_facial_emotion_model():
         model.eval()
         return model, 1
     except Exception as e:
-        st.error(f"Error loading facial_emotion: {str(e)}. Using default.")
+        st.error(f"Failed to load facial_emotion model: {str(e)}. Using default model.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -148,7 +148,7 @@ def load_emotion_detection_model():
         model.eval()
         return model, 3
     except Exception as e:
-        st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
+        st.error(f"Failed to load emotion_detection model: {str(e)}. Using default model.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
@@ -165,9 +165,10 @@ def load_age_gender_model(repo_id):
                 'accuracy': Accuracy()
             }
         )
+        st.success(f"Successfully loaded {repo_id} model.")
         return model
     except Exception as e:
-        st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+        st.error(f"Failed to load {repo_id}: {str(e)}. Age and gender detection disabled.")
         return None
 
 # Load models
@@ -205,6 +206,7 @@ def process_single_image(img, mirror=False):
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
     if len(faces) == 0:
+        st.warning("No faces detected in the image.")
         return img, None, None, None
 
     for (x, y, w, h) in faces:
@@ -233,8 +235,17 @@ def process_single_image(img, mirror=False):
             try:
                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
                 age_value = float(age_pred[0][0])
-                age = get_age_range(int(age_value))
-                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                gender_prob = float(gender_pred[0][0])
+                st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
+                if age_value < 0 or age_value > 100:
+                    st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
+                    age = "unknown"
+                else:
+                    age = get_age_range(int(age_value))
+                gender = "Female" if gender_prob > 0.5 else "Male"
+                if not 0 <= gender_prob <= 1:
+                    st.warning(f"Invalid gender probability: {gender_prob:.3f}. Setting to 'unknown'.")
+                    gender = "unknown"
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
                 age = "error"
@@ -302,12 +313,21 @@ if mode == "Video Mode":
                             try:
                                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
                                 age_value = float(age_pred[0][0])
-                                self.age_buffer.append(age_value)
-                                smoothed_age = int(np.mean(self.age_buffer))
-                                age = get_age_range(smoothed_age)
-                                if len(self.age_buffer) == self.age_buffer.maxlen:
-                                    st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
-                                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                                gender_prob = float(gender_pred[0][0])
+                                st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
+                                if age_value < 0 or age_value > 100:
+                                    st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
+                                    age = "unknown"
+                                else:
+                                    self.age_buffer.append(age_value)
+                                    smoothed_age = int(np.mean(self.age_buffer))
+                                    age = get_age_range(smoothed_age)
+                                    if len(self.age_buffer) == self.age_buffer.maxlen:
+                                        st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
+                                gender = "Female" if gender_prob > 0.5 else "Male"
+                                if not 0 <= gender_prob <= 1:
+                                    st.warning(f"Invalid gender probability: {gender_prob:.3f}. Setting to 'unknown'.")
+                                    gender = "unknown"
                             except Exception as e:
                                 st.error(f"Prediction error: {str(e)}")
                                 age = "error"
