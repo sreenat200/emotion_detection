@@ -10,6 +10,7 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 from tensorflow.keras.models import load_model
 from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
 from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
+from collections import deque
 
 # Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -88,8 +89,8 @@ with st.sidebar:
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0 
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=1)  # Default to Medium for better performance
-    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15 for better performance
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=1)  # Default to Medium
+    fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15
     mirror_feed = st.checkbox("Mirror Video Feed", value=True)
 
 quality_map = {
@@ -133,7 +134,6 @@ def load_emotion_detection_model():
 def load_age_gender_model():
     try:
         model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
-        # Load model with custom objects to handle 'mse' and other metrics
         model = load_model(
             model_path,
             custom_objects={
@@ -177,7 +177,8 @@ class EmotionProcessor(VideoProcessorBase):
     def __init__(self, mirror=False):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.mirror = mirror
-        self.no_face_count = 0  # Counter for frames with no faces detected
+        self.no_face_count = 0
+        self.age_buffer = deque(maxlen=5)  # Moving average buffer for age (5 frames)
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -197,7 +198,7 @@ class EmotionProcessor(VideoProcessorBase):
             gender = "unknown"
             emotion = "unknown"
         else:
-            self.no_face_count = 0  # Reset counter when faces are detected
+            self.no_face_count = 0
             for (x, y, w, h) in faces:
                 # Emotion detection (PyTorch)
                 face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
@@ -218,14 +219,19 @@ class EmotionProcessor(VideoProcessorBase):
                 gender = "unknown"
                 if age_gender_model is not None:
                     face_age_gender = img[y:y+h, x:x+w]
-                    face_age_gender = cv2.resize(face_age_gender, (64, 64))  # Match model input size
-                    face_age_gender = face_age_gender / 255.0  # Normalize
-                    face_age_gender = np.expand_dims(face_age_gender, axis=0)  # Add batch dimension
+                    face_age_gender = cv2.resize(face_age_gender, (64, 64))
+                    face_age_gender = face_age_gender / 255.0
+                    face_age_gender = np.expand_dims(face_age_gender, axis=0)
                     try:
                         age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                        age_value = int(max(0, min(100, age_pred[0][0])))  # Clip age to 0-100
-                        age = f"{age_value}"
+                        age_value = float(age_pred[0][0])
+                        self.age_buffer.append(age_value)  # Add to buffer
+                        smoothed_age = int(np.mean(self.age_buffer))  # Moving average
+                        age = f"{max(0, min(100, smoothed_age))}"  # Clip to 0-100
                         gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                        # Debug output
+                        if len(self.age_buffer) == self.age_buffer.maxlen:
+                            st.write(f"Raw Age: {age_value:.1f}, Smoothed Age: {age}")
                     except Exception as e:
                         st.error(f"Prediction error: {str(e)}")
                         age = "error"
@@ -240,7 +246,7 @@ class EmotionProcessor(VideoProcessorBase):
                 cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                 cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-                # Display age (continuous)
+                # Display age (continuous, smoothed)
                 age_text = f"Age: {age}"
                 text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
                 cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
