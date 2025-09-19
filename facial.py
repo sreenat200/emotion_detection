@@ -89,7 +89,7 @@ with st.sidebar:
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0 
     )
-    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=1)  # Default to Medium
+    quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)  # Default to Low for less lag
     fps = st.selectbox("Select FPS", [15, 30, 60], index=0)  # Default to 15
     mirror_feed = st.checkbox("Mirror Video Feed", value=True)
 
@@ -178,9 +178,14 @@ class EmotionProcessor(VideoProcessorBase):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.mirror = mirror
         self.no_face_count = 0
-        self.age_buffer = deque(maxlen=5)  # Moving average buffer for age (5 frames)
+        self.age_buffer = deque(maxlen=10)  # Increased buffer for more smoothing
+        self.frame_count = 0  # Frame counter for skipping inference
+        self.last_age = "unknown"  # Cache last age for skipped frames
+        self.last_gender = "unknown"  # Cache last gender for skipped frames
+        self.last_emotion = "unknown"  # Cache last emotion for skipped frames
 
     def recv(self, frame):
+        self.frame_count += 1
         img = frame.to_ndarray(format="bgr24")
         
         # Apply mirroring if enabled
@@ -192,50 +197,61 @@ class EmotionProcessor(VideoProcessorBase):
 
         if len(faces) == 0:
             self.no_face_count += 1
-            if self.no_face_count % 30 == 0:  # Log every 30 frames (~2 seconds at 15 FPS)
+            if self.no_face_count % 30 == 0:
                 st.warning("No faces detected in the frame.")
-            age = "unknown"
-            gender = "unknown"
-            emotion = "unknown"
+            age = self.last_age
+            gender = self.last_gender
+            emotion = self.last_emotion
         else:
             self.no_face_count = 0
             for (x, y, w, h) in faces:
-                # Emotion detection (PyTorch)
-                face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
-                face_emotion = cv2.resize(face_emotion, (48, 48))
-                if in_channels == 3:
-                    face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
-                    face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
-                else:
-                    face_emotion_pil = Image.fromarray(face_emotion, mode='L')
-                face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-                with torch.no_grad():
-                    output_emotion = emotion_model(face_emotion_tensor)
-                    _, pred_emotion = torch.max(output_emotion, 1)
-                    emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+                # Skip inference every 3 frames to reduce lag (process 1/3 of frames)
+                if self.frame_count % 3 == 0:
+                    # Emotion detection (PyTorch)
+                    face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
+                    face_emotion = cv2.resize(face_emotion, (48, 48))
+                    if in_channels == 3:
+                        face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
+                        face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
+                    else:
+                        face_emotion_pil = Image.fromarray(face_emotion, mode='L')
+                    face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
+                    with torch.no_grad():
+                        output_emotion = emotion_model(face_emotion_tensor)
+                        _, pred_emotion = torch.max(output_emotion, 1)
+                        emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-                # Age and Gender detection (Keras)
-                age = "unknown"
-                gender = "unknown"
-                if age_gender_model is not None:
-                    face_age_gender = img[y:y+h, x:x+w]
-                    face_age_gender = cv2.resize(face_age_gender, (64, 64))
-                    face_age_gender = face_age_gender / 255.0
-                    face_age_gender = np.expand_dims(face_age_gender, axis=0)
-                    try:
-                        age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                        age_value = float(age_pred[0][0])
-                        self.age_buffer.append(age_value)  # Add to buffer
-                        smoothed_age = int(np.mean(self.age_buffer))  # Moving average
-                        age = f"{max(0, min(100, smoothed_age))}"  # Clip to 0-100
-                        gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                        # Debug output
-                        if len(self.age_buffer) == self.age_buffer.maxlen:
-                            st.write(f"Raw Age: {age_value:.1f}, Smoothed Age: {age}")
-                    except Exception as e:
-                        st.error(f"Prediction error: {str(e)}")
-                        age = "error"
-                        gender = "error"
+                    # Age and Gender detection (Keras)
+                    age = "unknown"
+                    gender = "unknown"
+                    if age_gender_model is not None:
+                        face_age_gender = img[y:y+h, x:x+w]
+                        face_age_gender = cv2.resize(face_age_gender, (64, 64))
+                        face_age_gender = face_age_gender / 255.0
+                        face_age_gender = np.expand_dims(face_age_gender, axis=0)
+                        try:
+                            age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                            age_value = float(age_pred[0][0])
+                            self.age_buffer.append(age_value)
+                            smoothed_age = int(np.mean(self.age_buffer))
+                            age = f"{max(0, min(100, smoothed_age))}"
+                            gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                            # Debug output
+                            if len(self.age_buffer) == self.age_buffer.maxlen:
+                                st.write(f"Raw Age: {age_value:.1f}, Smoothed Age: {age}")
+                        except Exception as e:
+                            st.error(f"Prediction error: {str(e)}")
+                            age = "error"
+                            gender = "error"
+
+                    self.last_age = age
+                    self.last_gender = gender
+                    self.last_emotion = emotion
+                else:
+                    # Use cached values for skipped frames
+                    age = self.last_age
+                    gender = self.last_gender
+                    emotion = self.last_emotion
 
                 # Draw rectangle for face
                 cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
