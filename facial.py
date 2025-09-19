@@ -79,7 +79,7 @@ def get_transform(in_channels):
 
 # Define labels for emotion and gender
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-genders = ['Male', 'Female']  # 0: Male, 1: Female (from your Keras model)
+genders = ['Male', 'Female']  # 0: Male, 1: Female
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -88,7 +88,12 @@ with st.sidebar:
     model_option = st.selectbox(
         "Select Emotion Model",
         ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
-        index=0 
+        index=0
+    )
+    age_gender_model_option = st.selectbox(
+        "Select Age/Gender Model",
+        ["sreenathsree1578/age_gender_model_fairface", "sreenathsree1578/age_gender"],
+        index=0
     )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
@@ -135,9 +140,9 @@ def load_emotion_detection_model():
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
-def load_age_gender_model():
+def load_age_gender_model(repo_id):
     try:
-        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
+        model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
         model = load_model(
             model_path,
             custom_objects={
@@ -150,7 +155,7 @@ def load_age_gender_model():
         )
         return model
     except Exception as e:
-        st.error(f"Error loading age_gender model: {str(e)}. Age and gender detection disabled.")
+        st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
         return None
 
 # Load models
@@ -158,7 +163,7 @@ if model_option == "sreenathsree1578/facial_emotion":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model()
+age_gender_model = load_age_gender_model(age_gender_model_option)
 
 transform_live = get_transform(in_channels)
 
@@ -180,10 +185,9 @@ gender_colors = {
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
-    # Apply mirroring if requested
     if mirror:
         img = cv2.flip(img, 1)
-        st.write("Mirroring applied to snap image.")  # Debug message to confirm mirroring
+        st.write("Mirroring applied to snap image.")
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
@@ -192,7 +196,7 @@ def process_single_image(img, mirror=False):
         return img, None, None, None
 
     for (x, y, w, h) in faces:
-        # Emotion detection (PyTorch)
+        # Emotion detection
         face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
         face_emotion = cv2.resize(face_emotion, (48, 48))
         if in_channels == 3:
@@ -206,7 +210,7 @@ def process_single_image(img, mirror=False):
             _, pred_emotion = torch.max(output_emotion, 1)
             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-        # Age and Gender detection (Keras)
+        # Age and Gender detection
         age = "unknown"
         gender = "unknown"
         if age_gender_model is not None:
@@ -363,7 +367,6 @@ if mode == "Video Mode":
         )
 else:
     st.header("Snap Mode")
-    # Apply CSS to mirror the live camera preview if mirror_snap is checked
     if mirror_snap:
         st.markdown(
             """
@@ -385,12 +388,10 @@ else:
         if emotion is None or age is None or gender is None:
             st.warning("No faces detected in the photo.")
         else:
-            # Convert RGB colors to hexadecimal for HTML styling
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
             age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
             gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
             
-            # Display predictions as colored text using markdown
             st.markdown(
                 f"""
                 **Emotion**: <span style="color: {emotion_color_hex}">{emotion}</span><br>
