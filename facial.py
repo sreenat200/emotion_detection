@@ -81,6 +81,19 @@ def get_transform(in_channels):
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 genders = ['Male', 'Female']  # 0: Male, 1: Female
 
+# Define age ranges for sreenathsree1578/age_gender_model_fairface
+age_ranges = [
+    (0, 5, "0-5"), (6, 10, "6-10"), (11, 15, "11-15"), (16, 20, "16-20"),
+    (21, 30, "21-30"), (31, 40, "31-40"), (41, 50, "41-50"),
+    (51, 60, "51-60"), (61, 70, "61-70"), (71, 100, "71+")
+]
+
+def get_age_range(age_value):
+    for start, end, range_str in age_ranges:
+        if start <= age_value <= end:
+            return range_str
+    return "unknown"
+
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
 with st.sidebar:
@@ -221,7 +234,10 @@ def process_single_image(img, mirror=False):
             try:
                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
                 age_value = float(age_pred[0][0])
-                age = f"{max(0, min(100, int(age_value)))}"
+                if age_gender_model_option == "sreenathsree1578/age_gender_model_fairface":
+                    age = get_age_range(int(age_value))
+                else:
+                    age = f"{max(0, min(100, int(age_value)))}"
                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
@@ -290,12 +306,19 @@ if mode == "Video Mode":
                             try:
                                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
                                 age_value = float(age_pred[0][0])
-                                self.age_buffer.append(age_value)
-                                smoothed_age = int(np.mean(self.age_buffer))
-                                age = f"{max(0, min(100, smoothed_age))}"
+                                if age_gender_model_option == "sreenathsree1578/age_gender_model_fairface":
+                                    self.age_buffer.append(age_value)
+                                    smoothed_age = int(np.mean(self.age_buffer))
+                                    age = get_age_range(smoothed_age)
+                                    if len(self.age_buffer) == self.age_buffer.maxlen:
+                                        st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
+                                else:
+                                    self.age_buffer.append(age_value)
+                                    smoothed_age = int(np.mean(self.age_buffer))
+                                    age = f"{max(0, min(100, smoothed_age))}"
+                                    if len(self.age_buffer) == self.age_buffer.maxlen:
+                                        st.write(f"Raw Age: {age_value:.1f}, Smoothed Age: {age}")
                                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                                if len(self.age_buffer) == self.age_buffer.maxlen:
-                                    st.write(f"Raw Age: {age_value:.1f}, Smoothed Age: {age}")
                             except Exception as e:
                                 st.error(f"Prediction error: {str(e)}")
                                 age = "error"
