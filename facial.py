@@ -179,8 +179,12 @@ gender_colors = {
 
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    
+    # Apply mirroring if requested
     if mirror:
         img = cv2.flip(img, 1)
+        st.write("Mirroring applied to snap image.")  # Debug message to confirm mirroring
+    
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
