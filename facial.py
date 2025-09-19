@@ -75,14 +75,8 @@ def get_transform(in_channels):
         transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
     ])
 
-# Define labels for emotion, age, and gender
+# Define labels for emotion and gender
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-# Age is continuous (from regression), so we'll categorize it for display
-age_categories = {
-    range(0, 18): 'YOUNG',
-    range(18, 40): 'MIDDLE',
-    range(40, 120): 'OLD'
-}
 genders = ['Male', 'Female']  # 0: Male, 1: Female (from your Keras model)
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
@@ -91,7 +85,7 @@ with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Emotion Model",
-        ["sreenathsree1578/facial_emotion", "sreenathsreckji1578/emotion_detection"],
+        ["sreenathsree1578/facial_emotion", "sreenathsree1578/emotion_detection"],
         index=0 
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
@@ -138,12 +132,12 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_gender_model():
     try:
-        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender_model", filename="age_gender_model.h5")
+        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
         # Load model with custom objects to handle 'mse' and other metrics
         model = load_model(
             model_path,
             custom_objects={
-                'mse': MeanSquaredError(),  # Use class instead of function
+                'mse': MeanSquaredError(),
                 'MeanSquaredError': MeanSquaredError(),
                 'binary_crossentropy': BinaryCrossentropy(),
                 'mae': MeanAbsoluteError(),
@@ -173,11 +167,7 @@ emotion_colors = {
     'surprise': (0, 255, 255),
     'neutral': (255, 0, 0)
 }
-age_colors = {
-    'YOUNG': (255, 165, 0),
-    'MIDDLE': (200, 0, 200),
-    'OLD': (0, 128, 128)
-}
+age_color = (200, 0, 200)  # Single color for age (continuous value)
 gender_colors = {
     'Female': (255, 0, 255),
     'Male': (0, 0, 255)
@@ -222,12 +212,7 @@ class EmotionProcessor(VideoProcessorBase):
                 face_age_gender = face_age_gender / 255.0  # Normalize
                 face_age_gender = np.expand_dims(face_age_gender, axis=0)  # Add batch dimension
                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                age_value = int(age_pred[0][0])  # Continuous age
-                # Categorize age for display
-                for age_range, category in age_categories.items():
-                    if age_value in age_range:
-                        age = category
-                        break
+                age = f"{int(age_pred[0][0])}"  # Display continuous age as integer
                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
 
             # Draw rectangle for face
@@ -239,11 +224,11 @@ class EmotionProcessor(VideoProcessorBase):
             cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
             cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-            # Display age
-            age_color = age_colors.get(age, (255, 0, 0))
-            text_size_age = cv2.getTextSize(age, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            # Display age (continuous)
+            age_text = f"Age: {age}"
+            text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-            cv2.putText(img, age, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+            cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
 
             # Display gender
             gender_color = gender_colors.get(gender, (255, 0, 0))
@@ -290,4 +275,3 @@ except Exception as e:
         async_processing=True,
         rtc_configuration=rtc_config
     )
-
