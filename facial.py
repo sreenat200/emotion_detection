@@ -165,7 +165,7 @@ def load_age_gender_model(repo_id):
                 'accuracy': Accuracy()
             }
         )
-        st.success(f"Successfully loaded {repo_id} model.")
+        st.success(f"Successfully loaded model.")
         return model
     except Exception as e:
         st.error(f"Failed to load {repo_id}: {str(e)}. Age and gender detection disabled.")
@@ -441,3 +441,4 @@ else:
                 """,
                 unsafe_allow_html=True
             )
+
