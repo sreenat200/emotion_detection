@@ -138,7 +138,7 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_age_gender_model():
     try:
-        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender", filename="age_gender_model.h5")
+        model_path = hf_hub_download(repo_id="sreenathsree1578/age_gender_model", filename="age_gender_model.h5")
         # Load model with custom objects to handle 'mse' and other metrics
         model = load_model(
             model_path,
@@ -290,3 +290,4 @@ except Exception as e:
         async_processing=True,
         rtc_configuration=rtc_config
     )
+
