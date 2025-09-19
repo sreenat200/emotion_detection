@@ -90,6 +90,7 @@ with st.sidebar:
     )
     quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=2)
     fps = st.selectbox("Select FPS", [15, 30, 60], index=2)
+    mirror_feed = st.checkbox("Mirror Video Feed", value=True)
 
 quality_map = {
     "High (1080p)": {"width": 1920, "height": 1080},
@@ -182,11 +183,17 @@ gender_colors = {
 }
 
 class EmotionProcessor(VideoProcessorBase):
-    def __init__(self):
+    def __init__(self, mirror=False):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.mirror = mirror
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
+        
+        # Apply mirroring if enabled
+        if self.mirror:
+            img = cv2.flip(img, 1)
+        
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
 
@@ -259,7 +266,7 @@ rtc_config = RTCConfiguration({
 try:
     webrtc_streamer(
         key="emotion-detection",
-        video_processor_factory=EmotionProcessor,
+        video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
         media_stream_constraints={
             "video": {
                 "width": {"ideal": resolution["width"]},
@@ -276,7 +283,7 @@ except Exception as e:
     st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
     webrtc_streamer(
         key="emotion-detection-fallback",
-        video_processor_factory=EmotionProcessor,
+        video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
         media_stream_constraints={
             "video": {
                 "width": {"ideal": resolution["width"]},
