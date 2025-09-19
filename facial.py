@@ -363,6 +363,18 @@ if mode == "Video Mode":
         )
 else:
     st.header("Snap Mode")
+    # Apply CSS to mirror the live camera preview if mirror_snap is checked
+    if mirror_snap:
+        st.markdown(
+            """
+            <style>
+            video {
+                transform: scaleX(-1);
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
     image = st.camera_input("Take a photo")
     if image is not None:
         image_pil = Image.open(BytesIO(image.getvalue()))
