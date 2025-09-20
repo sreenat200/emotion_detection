@@ -11,7 +11,7 @@ from collections import deque
 from io import BytesIO
 import os
 
-# Emotion Detection Models
+# Emotion Detection Models (unchanged)
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(self, num_classes=7, in_channels=1):
         super(SimpleCNN, self).__init__()
@@ -101,8 +101,9 @@ def get_transform(in_channels):
             transforms.Normalize((0.5,), (0.5,))
         ])
     else:
+        # Match FairFace preprocessing exactly
         return transforms.Compose([
-            transforms.Resize((224, 224)),  # Match FairFace model's input size
+            transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
@@ -183,6 +184,7 @@ def load_fairface_model():
         config_path = hf_hub_download(repo_id="sreenathsree1578/UTK_gender_age_model", filename="config.json")
         with open(config_path) as f:
             config = json.load(f)
+        st.write(f"Loaded config: {config}")  # Debug: Print config
         model = MultiLabelResNet(config=config)
         model = model.from_pretrained("sreenathsree1578/UTK_gender_age_model")
         model.eval()
@@ -234,6 +236,7 @@ def process_single_image(img, mirror=False):
             output_emotion = emotion_model(face_emotion_tensor)
             _, pred_emotion = torch.max(output_emotion, 1)
             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+            st.write(f"Emotion raw prediction: {pred_emotion.item()}, mapped to: {emotion}")  # Debug
 
         # Age, Gender, Race detection
         age = "unknown"
@@ -250,9 +253,13 @@ def process_single_image(img, mirror=False):
                 _, gender_pred = torch.max(gender_out, 1)
                 _, race_pred = torch.max(race_out, 1)
                 _, age_pred = torch.max(age_out, 1)
-                gender = genders[gender_pred.item()] if gender_pred.item() < len(genders) else "unknown"
-                race = races[race_pred.item()] if race_pred.item() < len(races) else "unknown"
-                age = get_age_range(age_pred.item()) if age_pred.item() < len(age_ranges) else "unknown"
+                gender_idx = gender_pred.item()
+                race_idx = race_pred.item()
+                age_idx = age_pred.item()
+                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug
+                gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
+                race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
+                age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
 
         return img, emotion, age, gender, race
 
@@ -307,6 +314,7 @@ if mode == "Video Mode":
                             output_emotion = emotion_model(face_emotion_tensor)
                             _, pred_emotion = torch.max(output_emotion, 1)
                             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+                            st.write(f"Emotion raw prediction: {pred_emotion.item()}, mapped to: {emotion}")  # Debug
 
                         age = "unknown"
                         gender = "unknown"
@@ -322,9 +330,13 @@ if mode == "Video Mode":
                                 _, gender_pred = torch.max(gender_out, 1)
                                 _, race_pred = torch.max(race_out, 1)
                                 _, age_pred = torch.max(age_out, 1)
-                                gender = genders[gender_pred.item()] if gender_pred.item() < len(genders) else "unknown"
-                                race = races[race_pred.item()] if race_pred.item() < len(races) else "unknown"
-                                age = get_age_range(age_pred.item()) if age_pred.item() < len(age_ranges) else "unknown"
+                                gender_idx = gender_pred.item()
+                                race_idx = race_pred.item()
+                                age_idx = age_pred.item()
+                                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug
+                                gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
+                                race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
+                                age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
 
                         self.last_age = age
                         self.last_gender = gender
@@ -343,22 +355,25 @@ if mode == "Video Mode":
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
+                    y_offset = -45
                     if detect_age_gender_race:
                         if age_detection:
                             age_text = f"Age: {age}"
                             text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-                            cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_age[0], y + y_offset + 30), (255, 255, 255), -1)
+                            cv2.putText(img, age_text, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                            y_offset += 30
                         if gender_detection:
                             gender_color = gender_colors.get(gender, (255, 0, 0))
                             text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y-15 if not age_detection else y+15), (x+text_size_gender[0], y+15 if not age_detection else y+45), (255, 255, 255), -1)
-                            cv2.putText(img, gender, (x, y+10 if not age_detection else y+40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_gender[0], y + y_offset + 30), (255, 255, 255), -1)
+                            cv2.putText(img, gender, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                            y_offset += 30
                         if race_detection:
                             race_color = race_colors.get(race, (255, 0, 0))
                             text_size_race = cv2.getTextSize(race, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y+15 if not (age_detection or gender_detection) else y+45), (x+text_size_race[0], y+45 if not (age_detection or gender_detection) else y+75), (255, 255, 255), -1)
-                            cv2.putText(img, race, (x, y+40 if not (age_detection or gender_detection) else y+70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, race_color, 2)
+                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_race[0], y + y_offset + 30), (255, 255, 255), -1)
+                            cv2.putText(img, race, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, race_color, 2)
 
             return frame.from_ndarray(img, format="bgr24")
 
