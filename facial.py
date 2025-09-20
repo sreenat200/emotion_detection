@@ -143,7 +143,7 @@ def load_facial_emotion_model():
         return model, 1
     except Exception as e:
         with st.sidebar:
-            st.warning(f"Error loading facial_emotion: {str(e)}. Using default.")
+            st.warning(f"Error loading facial_emotion (Model 1): {str(e)}. Using default.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -159,7 +159,7 @@ def load_emotion_detection_model():
         return model, 3
     except Exception as e:
         with st.sidebar:
-            st.warning(f"Error loading emotion_detection: {str(e)}. Using default.")
+            st.warning(f"Error loading emotion_detection (Model 2): {str(e)}. Using default.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
@@ -195,7 +195,6 @@ def load_age_gender_model(repo_id, fallback=False):
                 "gender_deploy.prototxt",
                 "gender_net.caffemodel"
             ]
-            # Download files
             downloaded_files = []
             for file in model_files:
                 downloaded_files.append(hf_hub_download(repo_id=repo_id, filename=file))
@@ -214,7 +213,7 @@ def load_age_gender_model(repo_id, fallback=False):
             }
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Error loading {repo_id}: {str(e)}. Falling back to Model 1.")
+                st.warning(f"Error loading AjaySharma/genderDetection: {str(e)}. Falling back to Model 1.")
             return load_age_gender_model("sreenathsree1578/UTK_trained_model", fallback=True)
 
 # Load models
@@ -222,7 +221,6 @@ if model_option == "Model 1":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-
 age_gender_model = None
 if enable_age_gender:
     repo_id = "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "AjaySharma/genderDetection"
@@ -239,9 +237,7 @@ emotion_colors = {
     'surprise': (0, 255, 255),
     'neutral': (255, 0, 0)
 }
-
 age_color = (200, 0, 200)
-
 gender_colors = {
     'Female': (255, 0, 255),
     'Male': (0, 0, 255)
@@ -269,7 +265,9 @@ def predict_age_gender_opencv(face_img, model_data):
         age = get_age_range_model2(age_class)
         
         return age, gender
-    except Exception:
+    except Exception as e:
+        with st.sidebar:
+            st.warning(f"Age/Gender prediction failed (Model 2): {str(e)}")
         return "unknown", "unknown"
 
 def process_single_image(img, mirror=False):
@@ -280,31 +278,24 @@ def process_single_image(img, mirror=False):
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+    emotion = None
+    age = None
+    gender = None
     
     if len(faces) == 0:
-        return img, None, None, None
-    
-    # Process all detected faces
-    all_emotions = []
-    all_ages = []
-    all_genders = []
-    
+        return img, emotion, age, gender
+
     for (x, y, w, h) in faces:
-        # Draw face rectangle
-        cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
-        
         # Emotion detection
         face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
         face_emotion = cv2.resize(face_emotion, (48, 48))
-        
         if in_channels == 3:
             face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
             face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
         else:
             face_emotion_pil = Image.fromarray(face_emotion, mode='L')
-        
         face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-        
         try:
             with torch.no_grad():
                 output_emotion = emotion_model(face_emotion_tensor)
@@ -312,67 +303,58 @@ def process_single_image(img, mirror=False):
                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Emotion prediction failed: {str(e)}")
+                st.warning(f"Emotion prediction failed (Model {model_option}): {str(e)}. Input shape: {face_emotion_tensor.shape}")
             emotion = "unknown"
-        
-        all_emotions.append(emotion)
-        
+
         # Age and Gender detection
         age = "unknown"
         gender = "unknown"
-        
         if enable_age_gender and age_gender_model is not None:
             face_crop = img[y:y+h, x:x+w]
-            
             if age_gender_model["type"] == "keras":
                 # Model 1: Keras
                 input_size = age_gender_model["input_size"]
                 face_resize = cv2.resize(face_crop, input_size)
                 face_resize = face_resize / 255.0
                 face_input = np.expand_dims(face_resize, axis=0)
-                
                 try:
                     age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
                     age_value = float(age_pred[0][0])
                     age = get_age_range_model1(int(age_value))
                     gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                except Exception:
+                except Exception as e:
+                    with st.sidebar:
+                        st.warning(f"Age/Gender prediction failed (Model 1): {str(e)}")
                     age = "unknown"
                     gender = "unknown"
             else:
                 # Model 2: OpenCV DNN
                 age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
-        
-        all_ages.append(age)
-        all_genders.append(gender)
-        
+
         # Draw annotations on the image
-        # Emotion annotation
+        cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
         emotion_color = emotion_colors.get(emotion, (255, 0, 0))
         text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
         cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
         cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
-        
-        # Age annotation
+
         if enable_age_gender and age != "unknown":
             age_text = f"Age: {age}"
             text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
             cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-        
-        # Gender annotation
+
         if enable_age_gender and gender != "unknown":
             gender_color = gender_colors.get(gender, (255, 0, 0))
             text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
             cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
             cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
-    
-    # Return the first face's predictions for text display
-    return img, all_emotions[0] if all_emotions else None, all_ages[0] if all_ages else None, all_genders[0] if all_genders else None
+
+    return img, emotion, age, gender
 
 if mode == "Video Mode":
     resolution = quality_map[quality]
-    
+
     class EmotionProcessor(VideoProcessorBase):
         def __init__(self, mirror=False):
             self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -393,7 +375,7 @@ if mode == "Video Mode":
             
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-            
+
             if len(faces) == 0:
                 self.no_face_count += 1
                 if self.no_face_count % 30 == 0:
@@ -404,21 +386,16 @@ if mode == "Video Mode":
                 emotion = self.last_emotion
             else:
                 self.no_face_count = 0
-                
                 for (x, y, w, h) in faces:
                     if self.frame_count % 3 == 0:
-                        # Emotion detection
                         face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
                         face_emotion = cv2.resize(face_emotion, (48, 48))
-                        
                         if in_channels == 3:
                             face_emotion_rgb = cv2.cvtColor(face_emotion, cv2.COLOR_BGR2RGB)
                             face_emotion_pil = Image.fromarray(face_emotion_rgb, mode='RGB')
                         else:
                             face_emotion_pil = Image.fromarray(face_emotion, mode='L')
-                        
                         face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-                        
                         try:
                             with torch.no_grad():
                                 output_emotion = emotion_model(face_emotion_tensor)
@@ -426,23 +403,19 @@ if mode == "Video Mode":
                                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
                         except Exception as e:
                             with st.sidebar:
-                                st.warning(f"Emotion prediction failed: {str(e)}")
+                                st.warning(f"Emotion prediction failed (Model {model_option}): {str(e)}. Input shape: {face_emotion_tensor.shape}")
                             emotion = "unknown"
-                        
-                        # Age and Gender detection
+
                         age = "unknown"
                         gender = "unknown"
-                        
                         if enable_age_gender and age_gender_model is not None:
                             face_crop = img[y:y+h, x:x+w]
-                            
                             if age_gender_model["type"] == "keras":
                                 # Model 1: Keras
                                 input_size = age_gender_model["input_size"]
                                 face_resize = cv2.resize(face_crop, input_size)
                                 face_resize = face_resize / 255.0
                                 face_input = np.expand_dims(face_resize, axis=0)
-                                
                                 try:
                                     age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
                                     age_value = float(age_pred[0][0])
@@ -450,13 +423,15 @@ if mode == "Video Mode":
                                     smoothed_age = int(np.mean(self.age_buffer))
                                     age = get_age_range_model1(smoothed_age)
                                     gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                                except Exception:
+                                except Exception as e:
+                                    with st.sidebar:
+                                        st.warning(f"Age/Gender prediction failed (Model 1): {str(e)}")
                                     age = "unknown"
                                     gender = "unknown"
                             else:
                                 # Model 2: OpenCV DNN
                                 age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
-                        
+
                         self.last_age = age
                         self.last_gender = gender
                         self.last_emotion = emotion
@@ -464,30 +439,25 @@ if mode == "Video Mode":
                         age = self.last_age
                         gender = self.last_gender
                         emotion = self.last_emotion
-                    
-                    # Draw annotations
+
                     cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
-                    
-                    # Emotion
                     emotion_color = emotion_colors.get(emotion, (255, 0, 0))
                     text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
-                    
-                    # Age
+
                     if enable_age_gender and age != "unknown":
                         age_text = f"Age: {age}"
                         text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
                         cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
                         cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-                    
-                    # Gender
+
                     if enable_age_gender and gender != "unknown":
                         gender_color = gender_colors.get(gender, (255, 0, 0))
                         text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
                         cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
                         cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
-            
+
             return frame.from_ndarray(img, format="bgr24")
 
     rtc_config = RTCConfiguration({
@@ -537,11 +507,8 @@ if mode == "Video Mode":
                         st.warning("Please select a device to continue.")
                     else:
                         st.error(f"Camera 0 failed: {str(e2)}.")
-
 else:
-    # Snap Mode
     st.header("Snap Mode")
-    
     if mirror_snap:
         st.markdown(
             """
@@ -553,14 +520,11 @@ else:
             """,
             unsafe_allow_html=True
         )
-    
     image = st.camera_input("Take a photo")
-    
     if image is not None:
         image_pil = Image.open(BytesIO(image.getvalue()))
         img_rgb = np.array(image_pil)
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-        
         processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
         
         if emotion is None:
@@ -569,16 +533,15 @@ else:
         else:
             if emotion == "unknown":
                 with st.sidebar:
-                    st.warning("Emotion prediction failed or returned unknown.")
-            
-            # Get color components for HTML display
+                    st.warning(f"Emotion prediction failed or returned unknown (Model {model_option}).")
+            # Get color components
             emotion_rgb = emotion_colors.get(emotion, (255, 0, 0))
             age_rgb = age_color
             gender_rgb = gender_colors.get(gender, (255, 0, 0))
             
-            # Display results with colors
+            emotion_display = emotion if emotion is not None else "unknown"
             output_html = f"""
-                **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion}</span><br>
+                **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion_display}</span><br>
             """
             if enable_age_gender:
                 output_html += f"""
@@ -586,7 +549,6 @@ else:
                     **Gender**: <span style="color: #{gender_rgb[0]:02x}{gender_rgb[1]:02x}{gender_rgb[2]:02x}">{gender}</span>
                 """
             st.markdown(output_html, unsafe_allow_html=True)
-        
-        # Display the processed image with annotations
-        if processed_img is not None:
+
+            # Display the processed image in Snap Mode
             st.image(processed_img, channels="BGR", caption="Processed Image")
