@@ -109,7 +109,7 @@ with st.sidebar:
         ["Model 1", "Model 2"],
         index=0
     )
-    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=False)
+    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=True)
     if enable_age_gender:
         age_gender_model_option = st.selectbox(
             "Select Age/Gender Model",
@@ -163,11 +163,11 @@ def load_emotion_detection_model():
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
-def load_age_gender_model(repo_id):
-    if repo_id == "sreenathsree1578/UTK_trained_model":
+def load_age_gender_model(repo_id, fallback=False):
+    if repo_id == "sreenathsree1578/UTK_trained_model" or fallback:
         # Model 1: Keras .h5
         try:
-            model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
+            model_path = hf_hub_download(repo_id="sreenathsree1578/UTK_trained_model", filename="age_gender_model.h5")
             model = load_model(
                 model_path,
                 custom_objects={
@@ -181,7 +181,7 @@ def load_age_gender_model(repo_id):
             return {"type": "keras", "model": model, "input_size": (64, 64)}
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+                st.warning(f"Error loading sreenathsree1578/UTK_trained_model: {str(e)}. Age and gender detection disabled.")
             return None
     else:
         # Model 2: OpenCV DNN (AjaySharma/genderDetection)
@@ -208,17 +208,18 @@ def load_age_gender_model(repo_id):
             }
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled for Model 2.")
-            return None
+                st.warning(f"Error loading {repo_id}: {str(e)}. Falling back to Model 1.")
+            return load_age_gender_model("sreenathsree1578/UTK_trained_model", fallback=True)
 
 # Load models
 if model_option == "Model 1":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model(
-    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "AjaySharma/genderDetection"
-) if enable_age_gender else None
+age_gender_model = None
+if enable_age_gender:
+    repo_id = "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "AjaySharma/genderDetection"
+    age_gender_model = load_age_gender_model(repo_id)
 
 transform_live = get_transform(in_channels)
 
@@ -509,4 +510,3 @@ else:
 # Display the processed image in Snap Mode
 if mode == "Snap Mode" and image is not None and processed_img is not None:
     st.image(processed_img, channels="BGR", caption="Processed Image")
-
