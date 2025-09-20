@@ -109,11 +109,13 @@ with st.sidebar:
         ["Model 1", "Model 2"],
         index=0
     )
-    age_gender_model_option = st.selectbox(
-        "Select Age/Gender Model",
-        ["Model 1", "Model 2"],
-        index=0
-    )
+    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=True)
+    if enable_age_gender:
+        age_gender_model_option = st.selectbox(
+            "Select Age/Gender Model",
+            ["Model 1", "Model 2"],
+            index=0
+        )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
@@ -216,7 +218,7 @@ else:
     emotion_model, in_channels = load_emotion_detection_model()
 age_gender_model = load_age_gender_model(
     "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "AjaySharma/genderDetection"
-)
+) if enable_age_gender else None
 
 transform_live = get_transform(in_channels)
 
@@ -261,9 +263,6 @@ def predict_age_gender_opencv(face_img, model_data):
         return "unknown", "unknown"
 
 def process_single_image(img, mirror=False):
-    if age_gender_model is None:
-        return img, None, None, None
-    
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
     if mirror:
@@ -293,24 +292,25 @@ def process_single_image(img, mirror=False):
         # Age and Gender detection
         age = "unknown"
         gender = "unknown"
-        face_crop = img[y:y+h, x:x+w]
-        if age_gender_model["type"] == "keras":
-            # Model 1: Keras
-            input_size = age_gender_model["input_size"]
-            face_resize = cv2.resize(face_crop, input_size)
-            face_resize = face_resize / 255.0
-            face_input = np.expand_dims(face_resize, axis=0)
-            try:
-                age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
-                age_value = float(age_pred[0][0])
-                age = get_age_range_model1(int(age_value))
-                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-            except Exception:
-                age = "unknown"
-                gender = "unknown"
-        else:
-            # Model 2: OpenCV DNN
-            age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
+        if enable_age_gender and age_gender_model is not None:
+            face_crop = img[y:y+h, x:x+w]
+            if age_gender_model["type"] == "keras":
+                # Model 1: Keras
+                input_size = age_gender_model["input_size"]
+                face_resize = cv2.resize(face_crop, input_size)
+                face_resize = face_resize / 255.0
+                face_input = np.expand_dims(face_resize, axis=0)
+                try:
+                    age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
+                    age_value = float(age_pred[0][0])
+                    age = get_age_range_model1(int(age_value))
+                    gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                except Exception:
+                    age = "unknown"
+                    gender = "unknown"
+            else:
+                # Model 2: OpenCV DNN
+                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
 
         return img, emotion, age, gender
 
@@ -367,26 +367,27 @@ if mode == "Video Mode":
 
                         age = "unknown"
                         gender = "unknown"
-                        face_crop = img[y:y+h, x:x+w]
-                        if age_gender_model["type"] == "keras":
-                            # Model 1: Keras
-                            input_size = age_gender_model["input_size"]
-                            face_resize = cv2.resize(face_crop, input_size)
-                            face_resize = face_resize / 255.0
-                            face_input = np.expand_dims(face_resize, axis=0)
-                            try:
-                                age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
-                                age_value = float(age_pred[0][0])
-                                self.age_buffer.append(age_value)
-                                smoothed_age = int(np.mean(self.age_buffer))
-                                age = get_age_range_model1(smoothed_age)
-                                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                            except Exception:
-                                age = "unknown"
-                                gender = "unknown"
-                        else:
-                            # Model 2: OpenCV DNN
-                            age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
+                        if enable_age_gender and age_gender_model is not None:
+                            face_crop = img[y:y+h, x:x+w]
+                            if age_gender_model["type"] == "keras":
+                                # Model 1: Keras
+                                input_size = age_gender_model["input_size"]
+                                face_resize = cv2.resize(face_crop, input_size)
+                                face_resize = face_resize / 255.0
+                                face_input = np.expand_dims(face_resize, axis=0)
+                                try:
+                                    age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
+                                    age_value = float(age_pred[0][0])
+                                    self.age_buffer.append(age_value)
+                                    smoothed_age = int(np.mean(self.age_buffer))
+                                    age = get_age_range_model1(smoothed_age)
+                                    gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                                except Exception:
+                                    age = "unknown"
+                                    gender = "unknown"
+                            else:
+                                # Model 2: OpenCV DNN
+                                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
 
                         self.last_age = age
                         self.last_gender = gender
@@ -397,21 +398,22 @@ if mode == "Video Mode":
                         emotion = self.last_emotion
 
                     cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
-
                     emotion_color = emotion_colors.get(emotion, (255, 0, 0))
                     text_size_emotion = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-                    age_text = f"Age: {age}"
-                    text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-                    cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                    if enable_age_gender and age != "unknown":
+                        age_text = f"Age: {age}"
+                        text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
+                        cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
 
-                    gender_color = gender_colors.get(gender, (255, 0, 0))
-                    text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
-                    cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                    if enable_age_gender and gender != "unknown":
+                        gender_color = gender_colors.get(gender, (255, 0, 0))
+                        text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
+                        cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
 
             return frame.from_ndarray(img, format="bgr24")
 
@@ -482,22 +484,22 @@ else:
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
         
-        if emotion is None or age is None or gender is None:
+        if emotion is None:
             with st.sidebar:
                 st.warning("No faces detected in the photo.")
         else:
-            emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
-            age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
-            gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
-            
-            st.markdown(
-                f"""
-                **Emotion**: <span style="color: {emotion_color_hex}">{emotion}</span><br>
-                **Age**: <span style="color: {age_color_hex}">{age}</span><br>
-                **Gender**: <span style="color: {gender_color_hex}">{gender}</span>
-                """,
-                unsafe_allow_html=True
-            )
+            output_html = f"""
+                **Emotion**: <span style="color: #{format(emotion_colors.get(emotion, (255, 0, 0))[0]:02x}{emotion_colors.get(emotion, (255, 0, 0))[1]:02x}{emotion_colors.get(emotion, (255, 0, 0))[2]:02x}">{emotion}</span><br>
+            """
+            if enable_age_gender and age != "unknown":
+                output_html += f"""
+                    **Age**: <span style="color: #{format(age_color[0]:02x}{age_color[1]:02x}{age_color[2]:02x}">{age}</span><br>
+                """
+            if enable_age_gender and gender != "unknown":
+                output_html += f"""
+                    **Gender**: <span style="color: #{format(gender_colors.get(gender, (255, 0, 0))[0]:02x}{gender_colors.get(gender, (255, 0, 0))[1]:02x}{gender_colors.get(gender, (255, 0, 0))[2]:02x}">{gender}</span>
+                """
+            st.markdown(output_html, unsafe_allow_html=True)
 
 # Display the processed image in Snap Mode
 if mode == "Snap Mode" and image is not None and processed_img is not None:
