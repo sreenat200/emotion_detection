@@ -7,9 +7,11 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
+from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 from collections import deque
 from io import BytesIO
-import os
 
 # Emotion Detection Models
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -68,75 +70,43 @@ class EmotionDetectionCNN(torch.nn.Module, PyTorchModelHubMixin):
         x = self.classifier(x)
         return x
 
-# Age/Gender/Race Model
-class MultiLabelResNet(torch.nn.Module, PyTorchModelHubMixin):
-    def __init__(self, config=None):
-        super(MultiLabelResNet, self).__init__()
-        if config is None:
-            config = {}
-        self.backbone = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=config.get('pretrained', True))
-        self.backbone.fc = torch.nn.Identity()
-        self.gender_head = torch.nn.Sequential(
-            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_gender', 2))
-        )
-        self.race_head = torch.nn.Sequential(
-            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_race', 7))
-        )
-        self.age_head = torch.nn.Sequential(
-            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_age', 8))
-        )
-
-    def forward(self, x):
-        features = self.backbone(x)
-        gender_out = self.gender_head(features)
-        race_out = self.race_head(features)
-        age_out = self.age_head(features)
-        return gender_out, race_out, age_out
-
 def get_transform(in_channels):
-    if in_channels == 1:
-        return transforms.Compose([
-            transforms.Resize((48, 48)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-    else:
-        return transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+    return transforms.Compose([
+        transforms.Resize((48, 48)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
+    ])
 
-# Define labels
+# Define labels for emotion and gender
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-genders = ['Male', 'Female']
-races = ['White', 'Black', 'Latino_Hispanic', 'East_Asian', 'Southeast_Asian', 'Indian', 'Middle_Eastern']
+genders = ['Male', 'Female']  # 0: Male, 1: Female
+
+# Define age ranges for age_gender models
 age_ranges = [
-    (0, 2, "0-2"), (4, 6, "4-6"), (8, 13, "8-13"), (15, 20, "15-20"),
-    (21, 30, "21-30"), (31, 45, "31-45"), (46, 60, "46-60"), (60, 100, "60+")
+    (1, 10, "1-10"), (11, 20, "11-20"), (21, 30, "21-30"), (31, 40, "31-40"),
+    (41, 50, "41-50"), (51, 60, "51-60"), (61, 70, "61-70"), (71, 100, "71-100")
 ]
 
-def get_age_range(age_idx):
-    return age_ranges[age_idx][2] if 0 <= age_idx < len(age_ranges) else "unknown"
+def get_age_range(age_value):
+    for start, end, range_str in age_ranges:
+        if start <= age_value <= end:
+            return range_str
+    return "unknown"
 
-st.markdown("<h3>Live Facial Emotion, Age, Gender, and Race Detection</h3>", unsafe_allow_html=True)
+st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Emotion Model",
-        ["Model 1 (sreenathsree1578/facial_emotion)", "Model 2 (sreenathsree1578/emotion_detection)"],
+        ["Model 1", "Model 2"],
         index=0
     )
-    detect_age_gender_race = st.checkbox("Detect Age, Gender, and Race", value=True)
-    if detect_age_gender_race:
-        st.warning(
-            "Age, gender, and race detection may be inaccurate due to unavailable trained model weights. "
-            "Consider disabling race detection due to potential ethical concerns."
-        )
-        age_detection = st.checkbox("Detect Age", value=True)
-        gender_detection = st.checkbox("Detect Gender", value=True)
-        race_detection = st.checkbox("Detect Race", value=True)
+    age_gender_model_option = st.selectbox(
+        "Select Age/Gender Model",
+        ["Model 1", "Model 2"],
+        index=0
+    )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
@@ -163,7 +133,7 @@ def load_facial_emotion_model():
         model.eval()
         return model, 1
     except Exception as e:
-        st.error(f"Failed to load sreenathsree1578/facial_emotion model: {str(e)}. Using default model.")
+        st.error(f"Error loading facial_emotion: {str(e)}. Using default.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -178,61 +148,64 @@ def load_emotion_detection_model():
         model.eval()
         return model, 3
     except Exception as e:
-        st.error(f"Failed to load sreenathsree1578/emotion_detection model: {str(e)}. Using default model.")
+        st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
-def load_fairface_model():
+def load_age_gender_model(repo_id):
     try:
-        # Embedded configuration from provided config.json
-        config = {
-            "model_type": "MultiLabelResNet",
-            "pretrained": True,
-            "num_gender": 2,
-            "num_race": 7,
-            "num_age": 8,
-            "backbone": "resnet50",
-            "input_size": [3, 224, 224],
-            "tasks": ["gender", "race", "age"],
-            "normalization": {
-                "mean": [0.485, 0.456, 0.406],
-                "std": [0.229, 0.224, 0.225]
+        model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
+        model = load_model(
+            model_path,
+            custom_objects={
+                'mse': MeanSquaredError(),
+                'MeanSquaredError': MeanSquaredError(),
+                'binary_crossentropy': BinaryCrossentropy(),
+                'mae': MeanAbsoluteError(),
+                'accuracy': Accuracy()
             }
-        }
-        model = MultiLabelResNet(config=config)
-        model.eval()
+        )
         return model
     except Exception as e:
-        st.error(f"Failed to initialize MultiLabelResNet: {str(e)}. Age, gender, and race detection disabled.")
+        st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
         return None
 
 # Load models
-if model_option.startswith("Model 1"):
+if model_option == "Model 1":
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_race_model = load_fairface_model() if detect_age_gender_race else None
+age_gender_model = load_age_gender_model("sreenathsree1578/age_gender_model_fairface" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender")
 
 transform_live = get_transform(in_channels)
 
-emotion_colors = {'angry': (0, 0, 255), 'disgust': (0, 255, 0), 'fear': (255, 0, 0), 'happy': (0, 255, 0),
-                  'sad': (0, 165, 255), 'surprise': (0, 255, 255), 'neutral': (255, 0, 0)}
+emotion_colors = {
+    'angry': (0, 0, 255),
+    'disgust': (0, 255, 0),
+    'fear': (255, 0, 0),
+    'happy': (0, 255, 0),
+    'sad': (0, 165, 255),
+    'surprise': (0, 255, 255),
+    'neutral': (255, 0, 0)
+}
 age_color = (200, 0, 200)
-gender_colors = {'Female': (255, 0, 255), 'Male': (0, 0, 255)}
-race_colors = {race: (50 + i * 30, 50 + i * 20, 50 + i * 10) for i, race in enumerate(races)}
+gender_colors = {
+    'Female': (255, 0, 255),
+    'Male': (0, 0, 255)
+}
 
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
     if mirror:
         img = cv2.flip(img, 1)
+        st.write("Mirroring applied to snap image.")
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
     if len(faces) == 0:
-        st.warning("No faces detected in the image.")
-        return img, None, None, None, None
+        return img, None, None, None
 
     for (x, y, w, h) in faces:
         # Emotion detection
@@ -249,31 +222,27 @@ def process_single_image(img, mirror=False):
             _, pred_emotion = torch.max(output_emotion, 1)
             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-        # Age, Gender, Race detection
+        # Age and Gender detection
         age = "unknown"
         gender = "unknown"
-        race = "unknown"
-        if detect_age_gender_race and age_gender_race_model is not None:
-            face_aggr = img[y:y+h, x:x+w]
-            face_aggr = cv2.resize(face_aggr, (224, 224))
-            face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
-            face_aggr_pil = Image.fromarray(face_aggr_rgb)
-            face_aggr_tensor = transform_live(face_aggr_pil).unsqueeze(0)
-            with torch.no_grad():
-                gender_out, race_out, age_out = age_gender_race_model(face_aggr_tensor)
-                _, gender_pred = torch.max(gender_out, 1)
-                _, race_pred = torch.max(race_out, 1)
-                _, age_pred = torch.max(age_out, 1)
-                gender_idx = gender_pred.item()
-                race_idx = race_pred.item()
-                age_idx = age_pred.item()
-                gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
-                race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
-                age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
+        if age_gender_model is not None:
+            face_age_gender = img[y:y+h, x:x+w]
+            face_age_gender = cv2.resize(face_age_gender, (64, 64))
+            face_age_gender = face_age_gender / 255.0
+            face_age_gender = np.expand_dims(face_age_gender, axis=0)
+            try:
+                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                age_value = float(age_pred[0][0])
+                age = get_age_range(int(age_value))
+                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                age = "error"
+                gender = "error"
 
-        return img, emotion, age, gender, race
+        return img, emotion, age, gender
 
-    return img, None, None, None, None
+    return img, None, None, None
 
 if mode == "Video Mode":
     resolution = quality_map[quality]
@@ -287,7 +256,6 @@ if mode == "Video Mode":
             self.frame_count = 0
             self.last_age = "unknown"
             self.last_gender = "unknown"
-            self.last_race = "unknown"
             self.last_emotion = "unknown"
 
         def recv(self, frame):
@@ -306,12 +274,11 @@ if mode == "Video Mode":
                     st.warning("No faces detected in the frame.")
                 age = self.last_age
                 gender = self.last_gender
-                race = self.last_race
                 emotion = self.last_emotion
             else:
                 self.no_face_count = 0
                 for (x, y, w, h) in faces:
-                    if self.frame_count % 3 == 0:  # Process every 3rd frame
+                    if self.frame_count % 3 == 0:
                         face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
                         face_emotion = cv2.resize(face_emotion, (48, 48))
                         if in_channels == 3:
@@ -327,33 +294,31 @@ if mode == "Video Mode":
 
                         age = "unknown"
                         gender = "unknown"
-                        race = "unknown"
-                        if detect_age_gender_race and age_gender_race_model is not None:
-                            face_aggr = img[y:y+h, x:x+w]
-                            face_aggr = cv2.resize(face_aggr, (224, 224))
-                            face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
-                            face_aggr_pil = Image.fromarray(face_aggr_rgb)
-                            face_aggr_tensor = transform_live(face_aggr_pil).unsqueeze(0)
-                            with torch.no_grad():
-                                gender_out, race_out, age_out = age_gender_race_model(face_aggr_tensor)
-                                _, gender_pred = torch.max(gender_out, 1)
-                                _, race_pred = torch.max(race_out, 1)
-                                _, age_pred = torch.max(age_out, 1)
-                                gender_idx = gender_pred.item()
-                                race_idx = race_pred.item()
-                                age_idx = age_pred.item()
-                                gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
-                                race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
-                                age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
+                        if age_gender_model is not None:
+                            face_age_gender = img[y:y+h, x:x+w]
+                            face_age_gender = cv2.resize(face_age_gender, (64, 64))
+                            face_age_gender = face_age_gender / 255.0
+                            face_age_gender = np.expand_dims(face_age_gender, axis=0)
+                            try:
+                                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                                age_value = float(age_pred[0][0])
+                                self.age_buffer.append(age_value)
+                                smoothed_age = int(np.mean(self.age_buffer))
+                                age = get_age_range(smoothed_age)
+                                if len(self.age_buffer) == self.age_buffer.maxlen:
+                                    st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
+                                gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                            except Exception as e:
+                                st.error(f"Prediction error: {str(e)}")
+                                age = "error"
+                                gender = "error"
 
                         self.last_age = age
                         self.last_gender = gender
-                        self.last_race = race
                         self.last_emotion = emotion
                     else:
                         age = self.last_age
                         gender = self.last_gender
-                        race = self.last_race
                         emotion = self.last_emotion
 
                     cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
@@ -363,25 +328,15 @@ if mode == "Video Mode":
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-                    y_offset = -45
-                    if detect_age_gender_race:
-                        if age_detection:
-                            age_text = f"Age: {age}"
-                            text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_age[0], y + y_offset + 30), (255, 255, 255), -1)
-                            cv2.putText(img, age_text, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-                            y_offset += 30
-                        if gender_detection:
-                            gender_color = gender_colors.get(gender, (255, 0, 0))
-                            text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_gender[0], y + y_offset + 30), (255, 255, 255), -1)
-                            cv2.putText(img, gender, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
-                            y_offset += 30
-                        if race_detection:
-                            race_color = race_colors.get(race, (255, 0, 0))
-                            text_size_race = cv2.getTextSize(race, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                            cv2.rectangle(img, (x, y + y_offset), (x + text_size_race[0], y + y_offset + 30), (255, 255, 255), -1)
-                            cv2.putText(img, race, (x, y + y_offset + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, race_color, 2)
+                    age_text = f"Age: {age}"
+                    text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
+                    cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+
+                    gender_color = gender_colors.get(gender, (255, 0, 0))
+                    text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
+                    cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
 
             return frame.from_ndarray(img, format="bgr24")
 
@@ -449,21 +404,20 @@ else:
         image_pil = Image.open(BytesIO(image.getvalue()))
         img_rgb = np.array(image_pil)
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-        processed_img, emotion, age, gender, race = process_single_image(img_bgr, mirror=mirror_snap)
+        processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
         
-        if emotion is None or (detect_age_gender_race and (age is None or gender is None or race is None)):
+        if emotion is None or age is None or gender is None:
             st.warning("No faces detected in the photo.")
         else:
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
-            output = f"**Emotion**: <span style=\"color: {emotion_color_hex}\">{emotion}</span><br>"
-            if detect_age_gender_race:
-                if age_detection:
-                    age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
-                    output += f"**Age**: <span style=\"color: {age_color_hex}\">{age}</span><br>"
-                if gender_detection:
-                    gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
-                    output += f"**Gender**: <span style=\"color: {gender_color_hex}\">{gender}</span><br>"
-                if race_detection:
-                    race_color_hex = '#{:02x}{:02x}{:02x}'.format(*race_colors.get(race, (255, 0, 0)))
-                    output += f"**Race**: <span style=\"color: {race_color_hex}\">{race}</span>"
-            st.markdown(output, unsafe_allow_html=True)
+            age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
+            gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
+            
+            st.markdown(
+                f"""
+                **Emotion**: <span style="color: {emotion_color_hex}">{emotion}</span><br>
+                **Age**: <span style="color: {age_color_hex}">{age}</span><br>
+                **Gender**: <span style="color: {gender_color_hex}">{gender}</span>
+                """,
+                unsafe_allow_html=True
+            )
