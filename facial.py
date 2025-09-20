@@ -130,6 +130,7 @@ with st.sidebar:
     )
     detect_age_gender_race = st.checkbox("Detect Age, Gender, and Race", value=True)
     if detect_age_gender_race:
+        st.warning("Age, gender, and race detection may be inaccurate due to unavailable trained model weights.")
         age_detection = st.checkbox("Detect Age", value=True)
         gender_detection = st.checkbox("Detect Gender", value=True)
         race_detection = st.checkbox("Detect Race", value=True)
@@ -180,16 +181,26 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_fairface_model():
     try:
-        config_path = hf_hub_download(repo_id="sreenathsree1578/UTK_gender_age_model", filename="config.json")
-        with open(config_path) as f:
-            config = json.load(f)
-        st.write(f"Loaded config: {config}")  # Debug: Print config
+        # Use embedded configuration from provided config.json
+        config = {
+            "model_type": "MultiLabelResNet",
+            "pretrained": True,
+            "num_gender": 2,
+            "num_race": 7,
+            "num_age": 8,
+            "backbone": "resnet50",
+            "input_size": [3, 224, 224],
+            "tasks": ["gender", "race", "age"],
+            "normalization": {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225]
+            }
+        }
         model = MultiLabelResNet(config=config)
-        model = model.from_pretrained("sreenathsree1578/UTK_gender_age_model")
         model.eval()
         return model
     except Exception as e:
-        st.error(f"Failed to load sreenathsree1578/UTK_gender_age_model: {str(e)}. Age, gender, and race detection disabled.")
+        st.error(f"Failed to initialize MultiLabelResNet: {str(e)}. Age, gender, and race detection disabled.")
         return None
 
 # Load models
