@@ -109,7 +109,7 @@ with st.sidebar:
         ["Model 1", "Model 2"],
         index=0
     )
-    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=True)
+    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=False)
     if enable_age_gender:
         age_gender_model_option = st.selectbox(
             "Select Age/Gender Model",
@@ -509,3 +509,4 @@ else:
 # Display the processed image in Snap Mode
 if mode == "Snap Mode" and image is not None and processed_img is not None:
     st.image(processed_img, channels="BGR", caption="Processed Image")
+
