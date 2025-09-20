@@ -12,6 +12,7 @@ from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
 from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 from collections import deque
 from io import BytesIO
+import os
 
 # Emotion Detection Models
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -20,7 +21,7 @@ class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
         self.features = torch.nn.Sequential(
             torch.nn.Conv2d(in_channels, 32, 3, padding=1),
             torch.nn.ReLU(),
-            torch.nn.MaxPool3d(2, 2),
+            torch.nn.MaxPool2d(2, 2),
             torch.nn.Conv2d(32, 64, 3, padding=1),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(2, 2),
@@ -81,17 +82,23 @@ def get_transform(in_channels):
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 genders = ['Male', 'Female']  # 0: Male, 1: Female
 
-# Define age ranges for age_gender models
-age_ranges = [
+# Age ranges for Model 1 (regression)
+age_ranges_model1 = [
     (1, 10, "1-10"), (11, 20, "11-20"), (21, 30, "21-30"), (31, 40, "31-40"),
     (41, 50, "41-50"), (51, 60, "51-60"), (61, 70, "61-70"), (71, 100, "71-100")
 ]
 
-def get_age_range(age_value):
-    for start, end, range_str in age_ranges:
+# Age ranges for Model 2 (classification)
+age_ranges_model2 = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
+
+def get_age_range_model1(age_value):
+    for start, end, range_str in age_ranges_model1:
         if start <= age_value <= end:
             return range_str
     return "unknown"
+
+def get_age_range_model2(age_class):
+    return age_ranges_model2[age_class] if 0 <= age_class < len(age_ranges_model2) else "unknown"
 
 st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
@@ -153,22 +160,50 @@ def load_emotion_detection_model():
 
 @st.cache_resource
 def load_age_gender_model(repo_id):
-    try:
-        model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
-        model = load_model(
-            model_path,
-            custom_objects={
-                'mse': MeanSquaredError(),
-                'MeanSquaredError': MeanSquaredError(),
-                'binary_crossentropy': BinaryCrossentropy(),
-                'mae': MeanAbsoluteError(),
-                'accuracy': Accuracy()
+    if repo_id == "sreenathsree1578/UTK_trained_model":
+        # Model 1: Keras .h5
+        try:
+            model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
+            model = load_model(
+                model_path,
+                custom_objects={
+                    'mse': MeanSquaredError(),
+                    'MeanSquaredError': MeanSquaredError(),
+                    'binary_crossentropy': BinaryCrossentropy(),
+                    'mae': MeanAbsoluteError(),
+                    'accuracy': Accuracy()
+                }
+            )
+            return {"type": "keras", "model": model, "input_size": (64, 64)}
+        except Exception as e:
+            st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+            return None
+    else:
+        # Model 2: OpenCV DNN (AjaySharma/genderDetection)
+        try:
+            # Download files
+            face_pb = hf_hub_download(repo_id=repo_id, filename="opencv_face_detector_uint8.pb")
+            face_pbtxt = hf_hub_download(repo_id=repo_id, filename="opencv_face_detector.pbtxt")
+            age_prototxt = hf_hub_download(repo_id=repo_id, filename="age_deploy.prototxt")
+            age_caffemodel = hf_hub_download(repo_id=repo_id, filename="age_net.caffemodel")
+            gender_prototxt = hf_hub_download(repo_id=repo_id, filename="gender_deploy.prototxt")
+            gender_caffemodel = hf_hub_download(repo_id=repo_id, filename="gender_net.caffemodel")
+            
+            # Load networks
+            face_net = cv2.dnn.readNet(face_pb, face_pbtxt)
+            age_net = cv2.dnn.readNet(age_caffemodel, age_prototxt)
+            gender_net = cv2.dnn.readNet(gender_caffemodel, gender_prototxt)
+            
+            return {
+                "type": "opencv_dnn", 
+                "face_net": face_net, 
+                "age_net": age_net, 
+                "gender_net": gender_net, 
+                "input_size": (227, 227)
             }
-        )
-        return model
-    except Exception as e:
-        st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
-        return None
+        except Exception as e:
+            st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+            return None
 
 # Load models
 if model_option == "Model 1":
@@ -176,7 +211,7 @@ if model_option == "Model 1":
 else:
     emotion_model, in_channels = load_emotion_detection_model()
 age_gender_model = load_age_gender_model(
-    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender"
+    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "AjaySharma/genderDetection"
 )
 
 transform_live = get_transform(in_channels)
@@ -196,7 +231,30 @@ gender_colors = {
     'Male': (0, 0, 255)
 }
 
+def predict_age_gender_opencv(face_img, model_data):
+    """Predict age and gender using OpenCV DNN for Model 2."""
+    h, w = face_img.shape[:2]
+    blob = cv2.dnn.blobFromImage(face_img, 1.0, (227, 227), (78.4263377603, 87.7689143744, 114.895847746), swapRB=False)
+    
+    # Gender prediction
+    gender_net.setInput(blob)
+    gender_preds = gender_net.forward()
+    gender_conf = gender_preds[0][0]
+    gender = 'Male' if gender_conf < 0.5 else 'Female'  # Assuming 0: Male, 1: Female
+    
+    # Age prediction
+    age_net.setInput(blob)
+    age_preds = age_net.forward()
+    age_conf = age_preds[0]
+    age_class = np.argmax(age_conf)
+    age = get_age_range_model2(age_class)
+    
+    return age, gender
+
 def process_single_image(img, mirror=False):
+    if age_gender_model is None:
+        return img, None, None, None
+    
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
     if mirror:
@@ -227,20 +285,29 @@ def process_single_image(img, mirror=False):
         # Age and Gender detection
         age = "unknown"
         gender = "unknown"
-        if age_gender_model is not None:
-            face_age_gender = img[y:y+h, x:x+w]
-            # Use 64x64 for both Model 1 (UTK_trained_model) and Model 2
-            resize_size = (64, 64)
-            face_age_gender = cv2.resize(face_age_gender, resize_size)
-            face_age_gender = face_age_gender / 255.0
-            face_age_gender = np.expand_dims(face_age_gender, axis=0)
+        face_crop = img[y:y+h, x:x+w]
+        if age_gender_model["type"] == "keras":
+            # Model 1: Keras
+            input_size = age_gender_model["input_size"]
+            face_resize = cv2.resize(face_crop, input_size)
+            face_resize = face_resize / 255.0
+            face_input = np.expand_dims(face_resize, axis=0)
             try:
-                st.write(f"Input shape for prediction: {face_age_gender.shape}")
-                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                st.write(f"Input shape for prediction: {face_input.shape}")
+                age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
                 st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                 age_value = float(age_pred[0][0])
-                age = get_age_range(int(age_value))
+                age = get_age_range_model1(int(age_value))
                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                age = "error"
+                gender = "error"
+        else:
+            # Model 2: OpenCV DNN
+            try:
+                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
+                st.write(f"Predicted Age Range: {age}, Gender: {gender}")
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
                 age = "error"
@@ -300,24 +367,33 @@ if mode == "Video Mode":
 
                         age = "unknown"
                         gender = "unknown"
-                        if age_gender_model is not None:
-                            face_age_gender = img[y:y+h, x:x+w]
-                            # Use 64x64 for both Model 1 (UTK_trained_model) and Model 2
-                            resize_size = (64, 64)
-                            face_age_gender = cv2.resize(face_age_gender, resize_size)
-                            face_age_gender = face_age_gender / 255.0
-                            face_age_gender = np.expand_dims(face_age_gender, axis=0)
+                        face_crop = img[y:y+h, x:x+w]
+                        if age_gender_model["type"] == "keras":
+                            # Model 1: Keras
+                            input_size = age_gender_model["input_size"]
+                            face_resize = cv2.resize(face_crop, input_size)
+                            face_resize = face_resize / 255.0
+                            face_input = np.expand_dims(face_resize, axis=0)
                             try:
-                                st.write(f"Input shape for prediction: {face_age_gender.shape}")
-                                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                                st.write(f"Input shape for prediction: {face_input.shape}")
+                                age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
                                 st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                                 age_value = float(age_pred[0][0])
                                 self.age_buffer.append(age_value)
                                 smoothed_age = int(np.mean(self.age_buffer))
-                                age = get_age_range(smoothed_age)
+                                age = get_age_range_model1(smoothed_age)
                                 if len(self.age_buffer) == self.age_buffer.maxlen:
                                     st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
                                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
+                            except Exception as e:
+                                st.error(f"Prediction error: {str(e)}")
+                                age = "error"
+                                gender = "error"
+                        else:
+                            # Model 2: OpenCV DNN
+                            try:
+                                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
+                                st.write(f"Predicted Age Range: {age}, Gender: {gender}")
                             except Exception as e:
                                 st.error(f"Prediction error: {str(e)}")
                                 age = "error"
