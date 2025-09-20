@@ -186,18 +186,24 @@ def load_age_gender_model(repo_id, fallback=False):
     else:
         # Model 2: OpenCV DNN (AjaySharma/genderDetection)
         try:
+            # List expected files
+            model_files = [
+                "opencv_face_detector_uint8.pb",
+                "opencv_face_detector.pbtxt",
+                "age_deploy.prototxt",
+                "age_net.caffemodel",
+                "gender_deploy.prototxt",
+                "gender_net.caffemodel"
+            ]
             # Download files
-            face_pb = hf_hub_download(repo_id=repo_id, filename="opencv_face_detector_uint8.pb")
-            face_pbtxt = hf_hub_download(repo_id=repo_id, filename="opencv_face_detector.pbtxt")
-            age_prototxt = hf_hub_download(repo_id=repo_id, filename="age_deploy.prototxt")
-            age_caffemodel = hf_hub_download(repo_id=repo_id, filename="age_net.caffemodel")
-            gender_prototxt = hf_hub_download(repo_id=repo_id, filename="gender_deploy.prototxt")
-            gender_caffemodel = hf_hub_download(repo_id=repo_id, filename="gender_net.caffemodel")
+            downloaded_files = []
+            for file in model_files:
+                downloaded_files.append(hf_hub_download(repo_id=repo_id, filename=file))
             
             # Load networks
-            face_net = cv2.dnn.readNet(face_pb, face_pbtxt)
-            age_net = cv2.dnn.readNet(age_caffemodel, age_prototxt)
-            gender_net = cv2.dnn.readNet(gender_caffemodel, gender_prototxt)
+            face_net = cv2.dnn.readNet(downloaded_files[0], downloaded_files[1])
+            age_net = cv2.dnn.readNet(downloaded_files[3], downloaded_files[2])
+            gender_net = cv2.dnn.readNet(downloaded_files[5], downloaded_files[4])
             
             return {
                 "type": "opencv_dnn", 
@@ -510,12 +516,9 @@ else:
             output_html = f"""
                 **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion}</span><br>
             """
-            if enable_age_gender and age != "unknown":
+            if enable_age_gender:
                 output_html += f"""
                     **Age**: <span style="color: #{age_rgb[0]:02x}{age_rgb[1]:02x}{age_rgb[2]:02x}">{age}</span><br>
-                """
-            if enable_age_gender and gender != "unknown":
-                output_html += f"""
                     **Gender**: <span style="color: #{gender_rgb[0]:02x}{gender_rgb[1]:02x}{gender_rgb[2]:02x}">{gender}</span>
                 """
             st.markdown(output_html, unsafe_allow_html=True)
