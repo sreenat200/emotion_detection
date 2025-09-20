@@ -101,7 +101,6 @@ def get_transform(in_channels):
             transforms.Normalize((0.5,), (0.5,))
         ])
     else:
-        # Match FairFace preprocessing exactly
         return transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -256,7 +255,8 @@ def process_single_image(img, mirror=False):
                 gender_idx = gender_pred.item()
                 race_idx = race_pred.item()
                 age_idx = age_pred.item()
-                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug
+                st.write(f"Raw outputs - Gender: {gender_out[0].detach().numpy()}, Race: {race_out[0].detach().numpy()}, Age: {age_out[0].detach().numpy()}")  # Debug raw scores
+                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug indices
                 gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
                 race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
                 age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
@@ -301,7 +301,7 @@ if mode == "Video Mode":
             else:
                 self.no_face_count = 0
                 for (x, y, w, h) in faces:
-                    if self.frame_count % 3 == 0:
+                    if self.frame_count % 3 == 0:  # Process every 3rd frame
                         face_emotion = gray[y:y+h, x:x+w] if in_channels == 1 else img[y:y+h, x:x+w]
                         face_emotion = cv2.resize(face_emotion, (48, 48))
                         if in_channels == 3:
@@ -333,12 +333,13 @@ if mode == "Video Mode":
                                 gender_idx = gender_pred.item()
                                 race_idx = race_pred.item()
                                 age_idx = age_pred.item()
-                                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug
+                                st.write(f"Raw outputs - Age: {age_out[0].detach().numpy()}")  # Debug age scores
+                                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug indices
                                 gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
                                 race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
                                 age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
 
-                        self.last_age = age
+                        self.last_age = age  # Update last_age
                         self.last_gender = gender
                         self.last_race = race
                         self.last_emotion = emotion
