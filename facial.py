@@ -165,10 +165,6 @@ def load_age_gender_model(repo_id):
                 'accuracy': Accuracy()
             }
         )
-        # Debug: Print model input/output shapes
-        st.write(f"Loaded model from {repo_id}")
-        st.write(f"Input shape: {model.input_shape}")
-        st.write(f"Output shapes: {[output.shape for output in model.outputs]}")
         return model
     except Exception as e:
         st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
