@@ -99,14 +99,15 @@ with st.sidebar:
     st.header("Settings")
     model_option = st.selectbox(
         "Select Emotion Model",
-        ["Model 1", "Model 2"],
+        ["Model 1 (sreenathsree1578/facial_emotion)", "Model 2 (sreenathsree1578/emotion_detection)"],
         index=0
     )
     age_gender_model_option = st.selectbox(
         "Select Age/Gender Model",
-        ["Model 1", "Model 2"],
-        index=1
+        ["Model 1 (sreenathsree1578/UTK_gender_age_model)", "Model 2 (sreenathsree1578/age_gender)"],
+        index=0
     )
+    detect_age_gender = st.checkbox("Detect Age and Gender", value=True)
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
@@ -133,7 +134,7 @@ def load_facial_emotion_model():
         model.eval()
         return model, 1
     except Exception as e:
-        st.error(f"Failed to load facial_emotion model: {str(e)}. Using default model.")
+        st.error(f"Failed to load sreenathsree1578/facial_emotion model: {str(e)}. Using default model.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -148,7 +149,7 @@ def load_emotion_detection_model():
         model.eval()
         return model, 3
     except Exception as e:
-        st.error(f"Failed to load emotion_detection model: {str(e)}. Using default model.")
+        st.error(f"Failed to load sreenathsree1578/emotion_detection model: {str(e)}. Using default model.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
@@ -165,18 +166,18 @@ def load_age_gender_model(repo_id):
                 'accuracy': Accuracy()
             }
         )
-        st.success(f"Successfully loaded model.")
+        st.success(f"Successfully loaded {repo_id}.")
         return model
     except Exception as e:
         st.error(f"Failed to load {repo_id}: {str(e)}. Age and gender detection disabled.")
         return None
 
 # Load models
-if model_option == "Model 1":
+if model_option.startswith("Model 1"):
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model("sreenathsree1578/age_gender_model_fairface" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender")
+age_gender_model = load_age_gender_model("sreenathsree1578/UTK_gender_age_model" if age_gender_model_option.startswith("Model 1") else "sreenathsree1578/age_gender") if detect_age_gender else None
 
 transform_live = get_transform(in_channels)
 
@@ -227,7 +228,7 @@ def process_single_image(img, mirror=False):
         # Age and Gender detection
         age = "unknown"
         gender = "unknown"
-        if age_gender_model is not None:
+        if detect_age_gender and age_gender_model is not None:
             face_age_gender = img[y:y+h, x:x+w]
             face_age_gender = cv2.resize(face_age_gender, (64, 64))
             face_age_gender = face_age_gender / 255.0
@@ -305,7 +306,7 @@ if mode == "Video Mode":
 
                         age = "unknown"
                         gender = "unknown"
-                        if age_gender_model is not None:
+                        if detect_age_gender and age_gender_model is not None:
                             face_age_gender = img[y:y+h, x:x+w]
                             face_age_gender = cv2.resize(face_age_gender, (64, 64))
                             face_age_gender = face_age_gender / 255.0
@@ -348,15 +349,16 @@ if mode == "Video Mode":
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-                    age_text = f"Age: {age}"
-                    text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-                    cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                    if detect_age_gender:
+                        age_text = f"Age: {age}"
+                        text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
+                        cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
 
-                    gender_color = gender_colors.get(gender, (255, 0, 0))
-                    text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
-                    cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                        gender_color = gender_colors.get(gender, (255, 0, 0))
+                        text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
+                        cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
 
             return frame.from_ndarray(img, format="bgr24")
 
@@ -426,20 +428,14 @@ else:
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
         
-        if emotion is None or age is None or gender is None:
+        if emotion is None or (detect_age_gender and (age is None or gender is None)):
             st.warning("No faces detected in the photo.")
         else:
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
-            age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
-            gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
-            
-            st.markdown(
-                f"""
-                **Emotion**: <span style="color: {emotion_color_hex}">{emotion}</span><br>
-                **Age**: <span style="color: {age_color_hex}">{age}</span><br>
-                **Gender**: <span style="color: {gender_color_hex}">{gender}</span>
-                """,
-                unsafe_allow_html=True
-            )
-
-
+            output = f"**Emotion**: <span style=\"color: {emotion_color_hex}\">{emotion}</span><br>"
+            if detect_age_gender:
+                age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
+                gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
+                output += f"**Age**: <span style=\"color: {age_color_hex}\">{age}</span><br>"
+                output += f"**Gender**: <span style=\"color: {gender_color_hex}\">{gender}</span>"
+            st.markdown(output, unsafe_allow_html=True)
