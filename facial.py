@@ -551,7 +551,8 @@ else:
                     age_rgb = age_color
                     gender_rgb = gender_colors.get(gender, (255, 0, 0))
                     
-                    st.markdown(f"**Age**: <span style='color: #{age_rgb[0]:02x}{age_rgb[1]:02x}{age_rgb[2]:02x}; font-size: 20px'>{age}</span>", 
+                    st.markdown(f"Age:<span style='color: {age_rgb[0]:02x}{age_rgb[1]:02x}{age_rgb[2]:02x}; font-size: 20px'>{age}</span>", 
                                unsafe_allow_html=True)
-                    st.markdown(f"**Gender**: <span style='color: #{gender_rgb[0]:02x}{gender_rgb[1]:02x}{gender_rgb[2]:02x}; font-size: 20px'>{gender}</span>", 
+                    st.markdown(f"Gender: <span style='color: {gender_rgb[0]:02x}{gender_rgb[1]:02x}{gender_rgb[2]:02x}; font-size: 20px'>{gender}</span>", 
                                unsafe_allow_html=True)
+
