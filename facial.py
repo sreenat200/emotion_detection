@@ -530,6 +530,8 @@ else:
         if emotion is None:
             with st.sidebar:
                 st.warning("No faces detected in the photo.")
+            st.markdown("<h4 style='color: red; text-align: center;'>No face detected in the photo.</h4>", unsafe_allow_html=True)
+            st.image(processed_img, channels="BGR", caption="Processed Image")
         else:
             # Display results in a consistent format
             col1, col2 = st.columns([1, 2])
