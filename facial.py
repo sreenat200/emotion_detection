@@ -285,10 +285,15 @@ def process_single_image(img, mirror=False):
         else:
             face_emotion_pil = Image.fromarray(face_emotion, mode='L')
         face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-        with torch.no_grad():
-            output_emotion = emotion_model(face_emotion_tensor)
-            _, pred_emotion = torch.max(output_emotion, 1)
-            emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+        try:
+            with torch.no_grad():
+                output_emotion = emotion_model(face_emotion_tensor)
+                _, pred_emotion = torch.max(output_emotion, 1)
+                emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+        except Exception as e:
+            with st.sidebar:
+                st.warning(f"Emotion prediction failed: {str(e)}")
+            emotion = "unknown"
 
         # Age and Gender detection
         age = "unknown"
@@ -361,10 +366,15 @@ if mode == "Video Mode":
                         else:
                             face_emotion_pil = Image.fromarray(face_emotion, mode='L')
                         face_emotion_tensor = transform_live(face_emotion_pil).unsqueeze(0)
-                        with torch.no_grad():
-                            output_emotion = emotion_model(face_emotion_tensor)
-                            _, pred_emotion = torch.max(output_emotion, 1)
-                            emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+                        try:
+                            with torch.no_grad():
+                                output_emotion = emotion_model(face_emotion_tensor)
+                                _, pred_emotion = torch.max(output_emotion, 1)
+                                emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
+                        except Exception as e:
+                            with st.sidebar:
+                                st.warning(f"Emotion prediction failed: {str(e)}")
+                            emotion = "unknown"
 
                         age = "unknown"
                         gender = "unknown"
@@ -489,6 +499,9 @@ else:
             with st.sidebar:
                 st.warning("No faces detected in the photo.")
         else:
+            if emotion == "unknown":
+                with st.sidebar:
+                    st.warning("Emotion prediction failed or returned unknown.")
             # Get color components
             emotion_rgb = emotion_colors.get(emotion, (255, 0, 0))
             age_rgb = age_color
