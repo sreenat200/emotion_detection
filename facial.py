@@ -119,7 +119,7 @@ age_ranges = [
 def get_age_range(age_idx):
     return age_ranges[age_idx][2] if 0 <= age_idx < len(age_ranges) else "unknown"
 
-st.markdown("<h3>Live Facial Emotion, Age, Gender, and Race Detection</h3>", unsafe_allow_html=True)
+st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Settings")
@@ -128,15 +128,12 @@ with st.sidebar:
         ["Model 1 (sreenathsree1578/facial_emotion)", "Model 2 (sreenathsree1578/emotion_detection)"],
         index=0
     )
-    detect_age_gender_race = st.checkbox("Detect Age, Gender, and Race", value=True)
-    if detect_age_gender_race:
-        st.warning(
-            "Age, gender, and race detection may be inaccurate due to unavailable trained model weights. "
-            "Consider disabling race detection due to potential ethical concerns."
-        )
+    detect_age_gender = st.checkbox("Detect Age and Gender", value=False)
+    if detect_age_gender:
+        st.warning("Age and gender detection may be inaccurate due to unavailable trained model weights.")
         age_detection = st.checkbox("Detect Age", value=True)
         gender_detection = st.checkbox("Detect Gender", value=True)
-        race_detection = st.checkbox("Detect Race", value=True)
+        race_detection = st.checkbox("Detect Race (Optional, may have ethical concerns)", value=False)
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
@@ -184,7 +181,18 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_fairface_model():
     try:
-        # Embedded configuration from provided config.json
+        # Try loading a pretrained FairFace model or similar from Hugging Face
+        repo_id = "facebook/fairface"  # Replace with actual repo if available
+        config_path = hf_hub_download(repo_id=repo_id, filename="config.json")
+        with open(config_path) as f:
+            config = json.load(f)
+        model = MultiLabelResNet(config=config)
+        model = model.from_pretrained(repo_id)
+        model.eval()
+        return model
+    except Exception as e:
+        st.warning(f"Failed to load pretrained age/gender model: {str(e)}. Using fallback model (inaccurate predictions).")
+        # Fallback configuration
         config = {
             "model_type": "MultiLabelResNet",
             "pretrained": True,
@@ -202,16 +210,13 @@ def load_fairface_model():
         model = MultiLabelResNet(config=config)
         model.eval()
         return model
-    except Exception as e:
-        st.error(f"Failed to initialize MultiLabelResNet: {str(e)}. Age, gender, and race detection disabled.")
-        return None
 
 # Load models
 if model_option.startswith("Model 1"):
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_race_model = load_fairface_model() if detect_age_gender_race else None
+age_gender_race_model = load_fairface_model() if detect_age_gender else None
 
 transform_live = get_transform(in_channels)
 
@@ -253,7 +258,7 @@ def process_single_image(img, mirror=False):
         age = "unknown"
         gender = "unknown"
         race = "unknown"
-        if detect_age_gender_race and age_gender_race_model is not None:
+        if detect_age_gender and age_gender_race_model is not None:
             face_aggr = img[y:y+h, x:x+w]
             face_aggr = cv2.resize(face_aggr, (224, 224))
             face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
@@ -328,7 +333,7 @@ if mode == "Video Mode":
                         age = "unknown"
                         gender = "unknown"
                         race = "unknown"
-                        if detect_age_gender_race and age_gender_race_model is not None:
+                        if detect_age_gender and age_gender_race_model is not None:
                             face_aggr = img[y:y+h, x:x+w]
                             face_aggr = cv2.resize(face_aggr, (224, 224))
                             face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
@@ -364,7 +369,7 @@ if mode == "Video Mode":
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
                     y_offset = -45
-                    if detect_age_gender_race:
+                    if detect_age_gender:
                         if age_detection:
                             age_text = f"Age: {age}"
                             text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
@@ -451,12 +456,12 @@ else:
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         processed_img, emotion, age, gender, race = process_single_image(img_bgr, mirror=mirror_snap)
         
-        if emotion is None or (detect_age_gender_race and (age is None or gender is None or race is None)):
+        if emotion is None or (detect_age_gender and (age is None or gender is None or race is None)):
             st.warning("No faces detected in the photo.")
         else:
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
             output = f"**Emotion**: <span style=\"color: {emotion_color_hex}\">{emotion}</span><br>"
-            if detect_age_gender_race:
+            if detect_age_gender:
                 if age_detection:
                     age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
                     output += f"**Age**: <span style=\"color: {age_color_hex}\">{age}</span><br>"
