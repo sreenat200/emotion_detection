@@ -143,7 +143,7 @@ def load_facial_emotion_model():
         return model, 1
     except Exception as e:
         with st.sidebar:
-            st.warning(f"Error loading facial_emotion: {str(e)}. Using default.")
+            st.warning(f"Error loading facial_emotion (Model 1): {str(e)}. Using default.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -159,7 +159,7 @@ def load_emotion_detection_model():
         return model, 3
     except Exception as e:
         with st.sidebar:
-            st.warning(f"Error loading emotion_detection: {str(e)}. Using default.")
+            st.warning(f"Error loading emotion_detection (Model 2): {str(e)}. Using default.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
@@ -195,7 +195,6 @@ def load_age_gender_model(repo_id, fallback=False):
                 "gender_deploy.prototxt",
                 "gender_net.caffemodel"
             ]
-            # Download files
             downloaded_files = []
             for file in model_files:
                 downloaded_files.append(hf_hub_download(repo_id=repo_id, filename=file))
@@ -214,7 +213,7 @@ def load_age_gender_model(repo_id, fallback=False):
             }
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Error loading {repo_id}: {str(e)}. Falling back to Model 1.")
+                st.warning(f"Error loading AjaySharma/genderDetection: {str(e)}. Falling back to Model 1.")
             return load_age_gender_model("sreenathsree1578/UTK_trained_model", fallback=True)
 
 # Load models
@@ -266,7 +265,9 @@ def predict_age_gender_opencv(face_img, model_data):
         age = get_age_range_model2(age_class)
         
         return age, gender
-    except Exception:
+    except Exception as e:
+        with st.sidebar:
+            st.warning(f"Age/Gender prediction failed (Model 2): {str(e)}")
         return "unknown", "unknown"
 
 def process_single_image(img, mirror=False):
@@ -298,7 +299,7 @@ def process_single_image(img, mirror=False):
                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
         except Exception as e:
             with st.sidebar:
-                st.warning(f"Emotion prediction failed: {str(e)}")
+                st.warning(f"Emotion prediction failed (Model {model_option}): {str(e)}. Input shape: {face_emotion_tensor.shape}")
             emotion = "unknown"
 
         # Age and Gender detection
@@ -317,7 +318,9 @@ def process_single_image(img, mirror=False):
                     age_value = float(age_pred[0][0])
                     age = get_age_range_model1(int(age_value))
                     gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                except Exception:
+                except Exception as e:
+                    with st.sidebar:
+                        st.warning(f"Age/Gender prediction failed (Model 1): {str(e)}")
                     age = "unknown"
                     gender = "unknown"
             else:
@@ -379,7 +382,7 @@ if mode == "Video Mode":
                                 emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
                         except Exception as e:
                             with st.sidebar:
-                                st.warning(f"Emotion prediction failed: {str(e)}")
+                                st.warning(f"Emotion prediction failed (Model {model_option}): {str(e)}. Input shape: {face_emotion_tensor.shape}")
                             emotion = "unknown"
 
                         age = "unknown"
@@ -399,7 +402,9 @@ if mode == "Video Mode":
                                     smoothed_age = int(np.mean(self.age_buffer))
                                     age = get_age_range_model1(smoothed_age)
                                     gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                                except Exception:
+                                except Exception as e:
+                                    with st.sidebar:
+                                        st.warning(f"Age/Gender prediction failed (Model 1): {str(e)}")
                                     age = "unknown"
                                     gender = "unknown"
                             else:
@@ -507,14 +512,15 @@ else:
         else:
             if emotion == "unknown":
                 with st.sidebar:
-                    st.warning("Emotion prediction failed or returned unknown.")
+                    st.warning(f"Emotion prediction failed or returned unknown (Model {model_option}).")
             # Get color components
             emotion_rgb = emotion_colors.get(emotion, (255, 0, 0))
             age_rgb = age_color
             gender_rgb = gender_colors.get(gender, (255, 0, 0))
             
+            emotion_display = emotion if emotion is not None else "unknown"
             output_html = f"""
-                **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion}</span><br>
+                **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion_display}</span><br>
             """
             if enable_age_gender:
                 output_html += f"""
