@@ -165,6 +165,10 @@ def load_age_gender_model(repo_id):
                 'accuracy': Accuracy()
             }
         )
+        # Debug: Print model input/output shapes
+        st.write(f"Loaded model from {repo_id}")
+        st.write(f"Input shape: {model.input_shape}")
+        st.write(f"Output shapes: {[output.shape for output in model.outputs]}")
         return model
     except Exception as e:
         st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
@@ -229,13 +233,15 @@ def process_single_image(img, mirror=False):
         gender = "unknown"
         if age_gender_model is not None:
             face_age_gender = img[y:y+h, x:x+w]
-            # Use 128x128 for Model 1 (UTK_trained_model), 64x64 for Model 2
-            resize_size = (128, 128) if age_gender_model_option == "Model 1" else (64, 64)
+            # Use 64x64 for both Model 1 (UTK_trained_model) and Model 2
+            resize_size = (64, 64)
             face_age_gender = cv2.resize(face_age_gender, resize_size)
             face_age_gender = face_age_gender / 255.0
             face_age_gender = np.expand_dims(face_age_gender, axis=0)
             try:
+                st.write(f"Input shape for prediction: {face_age_gender.shape}")
                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                 age_value = float(age_pred[0][0])
                 age = get_age_range(int(age_value))
                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
@@ -300,13 +306,15 @@ if mode == "Video Mode":
                         gender = "unknown"
                         if age_gender_model is not None:
                             face_age_gender = img[y:y+h, x:x+w]
-                            # Use 128x128 for Model 1 (UTK_trained_model), 64x64 for Model 2
-                            resize_size = (128, 128) if age_gender_model_option == "Model 1" else (64, 64)
+                            # Use 64x64 for both Model 1 (UTK_trained_model) and Model 2
+                            resize_size = (64, 64)
                             face_age_gender = cv2.resize(face_age_gender, resize_size)
                             face_age_gender = face_age_gender / 255.0
                             face_age_gender = np.expand_dims(face_age_gender, axis=0)
                             try:
+                                st.write(f"Input shape for prediction: {face_age_gender.shape}")
                                 age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
+                                st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                                 age_value = float(age_pred[0][0])
                                 self.age_buffer.append(age_value)
                                 smoothed_age = int(np.mean(self.age_buffer))
