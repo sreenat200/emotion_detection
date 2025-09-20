@@ -11,7 +11,7 @@ from collections import deque
 from io import BytesIO
 import os
 
-# Emotion Detection Models (unchanged)
+# Emotion Detection Models
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(self, num_classes=7, in_channels=1):
         super(SimpleCNN, self).__init__()
@@ -130,7 +130,10 @@ with st.sidebar:
     )
     detect_age_gender_race = st.checkbox("Detect Age, Gender, and Race", value=True)
     if detect_age_gender_race:
-        st.warning("Age, gender, and race detection may be inaccurate due to unavailable trained model weights.")
+        st.warning(
+            "Age, gender, and race detection may be inaccurate due to unavailable trained model weights. "
+            "Consider disabling race detection due to potential ethical concerns."
+        )
         age_detection = st.checkbox("Detect Age", value=True)
         gender_detection = st.checkbox("Detect Gender", value=True)
         race_detection = st.checkbox("Detect Race", value=True)
@@ -181,7 +184,7 @@ def load_emotion_detection_model():
 @st.cache_resource
 def load_fairface_model():
     try:
-        # Use embedded configuration from provided config.json
+        # Embedded configuration from provided config.json
         config = {
             "model_type": "MultiLabelResNet",
             "pretrained": True,
@@ -223,7 +226,6 @@ def process_single_image(img, mirror=False):
     
     if mirror:
         img = cv2.flip(img, 1)
-        st.write("Mirroring applied to snap image.")
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
@@ -246,7 +248,6 @@ def process_single_image(img, mirror=False):
             output_emotion = emotion_model(face_emotion_tensor)
             _, pred_emotion = torch.max(output_emotion, 1)
             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
-            st.write(f"Emotion raw prediction: {pred_emotion.item()}, mapped to: {emotion}")  # Debug
 
         # Age, Gender, Race detection
         age = "unknown"
@@ -254,7 +255,7 @@ def process_single_image(img, mirror=False):
         race = "unknown"
         if detect_age_gender_race and age_gender_race_model is not None:
             face_aggr = img[y:y+h, x:x+w]
-            face_aggr = cv2.resize(face_aggr, (224, 224))  # Match FairFace input size
+            face_aggr = cv2.resize(face_aggr, (224, 224))
             face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
             face_aggr_pil = Image.fromarray(face_aggr_rgb)
             face_aggr_tensor = transform_live(face_aggr_pil).unsqueeze(0)
@@ -266,8 +267,6 @@ def process_single_image(img, mirror=False):
                 gender_idx = gender_pred.item()
                 race_idx = race_pred.item()
                 age_idx = age_pred.item()
-                st.write(f"Raw outputs - Gender: {gender_out[0].detach().numpy()}, Race: {race_out[0].detach().numpy()}, Age: {age_out[0].detach().numpy()}")  # Debug raw scores
-                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug indices
                 gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
                 race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
                 age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
@@ -325,7 +324,6 @@ if mode == "Video Mode":
                             output_emotion = emotion_model(face_emotion_tensor)
                             _, pred_emotion = torch.max(output_emotion, 1)
                             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
-                            st.write(f"Emotion raw prediction: {pred_emotion.item()}, mapped to: {emotion}")  # Debug
 
                         age = "unknown"
                         gender = "unknown"
@@ -344,13 +342,11 @@ if mode == "Video Mode":
                                 gender_idx = gender_pred.item()
                                 race_idx = race_pred.item()
                                 age_idx = age_pred.item()
-                                st.write(f"Raw outputs - Age: {age_out[0].detach().numpy()}")  # Debug age scores
-                                st.write(f"Raw predictions - Gender: {gender_idx}, Race: {race_idx}, Age: {age_idx}")  # Debug indices
                                 gender = genders[gender_idx] if 0 <= gender_idx < len(genders) else "unknown"
                                 race = races[race_idx] if 0 <= race_idx < len(races) else "unknown"
                                 age = get_age_range(age_idx) if 0 <= age_idx < len(age_ranges) else "unknown"
 
-                        self.last_age = age  # Update last_age
+                        self.last_age = age
                         self.last_gender = gender
                         self.last_race = race
                         self.last_emotion = emotion
