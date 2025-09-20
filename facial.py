@@ -12,6 +12,7 @@ from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
 from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 from collections import deque
 from io import BytesIO
+import os
 
 # Emotion Detection Models
 class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
@@ -196,6 +197,24 @@ gender_colors = {
     'Male': (0, 0, 255)
 }
 
+def get_model_info(model):
+    if model is None:
+        return "fairface", (64, 64), 2
+    try:
+        input_shape = model.input_shape
+        img_size = input_shape[1:3] if len(input_shape) == 4 else (64, 64)
+        output_shape = model.output_shape
+        if isinstance(output_shape, list):
+            num_outputs = len(output_shape)
+        else:
+            num_outputs = len(output_shape) if hasattr(output_shape, '__len__') else 1
+        if num_outputs == 2:
+            return "fairface", img_size, num_outputs
+        else:
+            return "UTK", img_size, num_outputs
+    except:
+        return "fairface", (64, 64), 2
+
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
@@ -229,16 +248,24 @@ def process_single_image(img, mirror=False):
         age = "unknown"
         gender = "unknown"
         if detect_age_gender and age_gender_model is not None:
+            model_type, img_size, num_outputs = get_model_info(age_gender_model)
             face_age_gender = img[y:y+h, x:x+w]
-            face_age_gender = cv2.resize(face_age_gender, (64, 64))
-            face_age_gender = face_age_gender / 255.0
+            face_age_gender = cv2.resize(face_age_gender, img_size)
+            if len(face_age_gender.shape) == 2:
+                face_age_gender = cv2.cvtColor(face_age_gender, cv2.COLOR_GRAY2RGB)
+            face_age_gender = face_age_gender.astype(np.float32) / 255.0
             face_age_gender = np.expand_dims(face_age_gender, axis=0)
             try:
-                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                age_value = float(age_pred[0][0])
-                gender_prob = float(gender_pred[0][0])
+                predictions = age_gender_model.predict(face_age_gender, verbose=0)
+                st.write(f"Model type: {model_type}, Predictions shape: {np.array(predictions).shape}")
+                if model_type == "UTK":
+                    age_value = float(predictions[0][0])
+                    gender_prob = float(predictions[1][0])
+                else:
+                    age_value = float(predictions[0][0])
+                    gender_prob = float(predictions[1][0][0])
                 st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
-                if age_value < 0 or age_value > 100:
+                if age_value < 0 or age_value > 116:
                     st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
                     age = "unknown"
                 else:
@@ -269,6 +296,11 @@ if mode == "Video Mode":
             self.last_age = "unknown"
             self.last_gender = "unknown"
             self.last_emotion = "unknown"
+            self.model_type = "fairface"
+            self.img_size = (64, 64)
+            self.num_outputs = 2
+            if age_gender_model is not None:
+                self.model_type, self.img_size, self.num_outputs = get_model_info(age_gender_model)
 
         def recv(self, frame):
             self.frame_count += 1
@@ -308,15 +340,20 @@ if mode == "Video Mode":
                         gender = "unknown"
                         if detect_age_gender and age_gender_model is not None:
                             face_age_gender = img[y:y+h, x:x+w]
-                            face_age_gender = cv2.resize(face_age_gender, (64, 64))
-                            face_age_gender = face_age_gender / 255.0
+                            face_age_gender = cv2.resize(face_age_gender, self.img_size)
+                            if len(face_age_gender.shape) == 2:
+                                face_age_gender = cv2.cvtColor(face_age_gender, cv2.COLOR_GRAY2RGB)
+                            face_age_gender = face_age_gender.astype(np.float32) / 255.0
                             face_age_gender = np.expand_dims(face_age_gender, axis=0)
                             try:
-                                age_pred, gender_pred = age_gender_model.predict(face_age_gender, verbose=0)
-                                age_value = float(age_pred[0][0])
-                                gender_prob = float(gender_pred[0][0])
-                                st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
-                                if age_value < 0 or age_value > 100:
+                                predictions = age_gender_model.predict(face_age_gender, verbose=0)
+                                if self.model_type == "UTK":
+                                    age_value = float(predictions[0][0])
+                                    gender_prob = float(predictions[1][0])
+                                else:
+                                    age_value = float(predictions[0][0])
+                                    gender_prob = float(predictions[1][0][0])
+                                if age_value < 0 or age_value > 116:
                                     st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
                                     age = "unknown"
                                 else:
