@@ -488,16 +488,21 @@ else:
             with st.sidebar:
                 st.warning("No faces detected in the photo.")
         else:
+            # Get color components
+            emotion_rgb = emotion_colors.get(emotion, (255, 0, 0))
+            age_rgb = age_color
+            gender_rgb = gender_colors.get(gender, (255, 0, 0))
+            
             output_html = f"""
-                **Emotion**: <span style="color: #{format(emotion_colors.get(emotion, (255, 0, 0))[0]:02x}{emotion_colors.get(emotion, (255, 0, 0))[1]:02x}{emotion_colors.get(emotion, (255, 0, 0))[2]:02x}">{emotion}</span><br>
+                **Emotion**: <span style="color: #{emotion_rgb[0]:02x}{emotion_rgb[1]:02x}{emotion_rgb[2]:02x}">{emotion}</span><br>
             """
             if enable_age_gender and age != "unknown":
                 output_html += f"""
-                    **Age**: <span style="color: #{format(age_color[0]:02x}{age_color[1]:02x}{age_color[2]:02x}">{age}</span><br>
+                    **Age**: <span style="color: #{age_rgb[0]:02x}{age_rgb[1]:02x}{age_rgb[2]:02x}">{age}</span><br>
                 """
             if enable_age_gender and gender != "unknown":
                 output_html += f"""
-                    **Gender**: <span style="color: #{format(gender_colors.get(gender, (255, 0, 0))[0]:02x}{gender_colors.get(gender, (255, 0, 0))[1]:02x}{gender_colors.get(gender, (255, 0, 0))[2]:02x}">{gender}</span>
+                    **Gender**: <span style="color: #{gender_rgb[0]:02x}{gender_rgb[1]:02x}{gender_rgb[2]:02x}">{gender}</span>
                 """
             st.markdown(output_html, unsafe_allow_html=True)
 
