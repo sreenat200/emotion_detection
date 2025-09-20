@@ -176,7 +176,7 @@ if model_option == "Model 1":
 else:
     emotion_model, in_channels = load_emotion_detection_model()
 age_gender_model = load_age_gender_model(
-    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender"
+    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "abhilash88/age-gender-prediction"
 )
 
 transform_live = get_transform(in_channels)
