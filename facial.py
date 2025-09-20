@@ -140,7 +140,8 @@ def load_facial_emotion_model():
         model.eval()
         return model, 1
     except Exception as e:
-        st.error(f"Error loading facial_emotion: {str(e)}. Using default.")
+        with st.sidebar:
+            st.warning(f"Error loading facial_emotion: {str(e)}. Using default.")
         return SimpleCNN(num_classes=7, in_channels=1), 1
 
 @st.cache_resource
@@ -155,7 +156,8 @@ def load_emotion_detection_model():
         model.eval()
         return model, 3
     except Exception as e:
-        st.error(f"Error loading emotion_detection: {str(e)}. Using default.")
+        with st.sidebar:
+            st.warning(f"Error loading emotion_detection: {str(e)}. Using default.")
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
@@ -164,7 +166,6 @@ def load_age_gender_model(repo_id):
         # Model 1: Keras .h5
         try:
             model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
-            st.write(f"Downloaded Keras model: {model_path}")
             model = load_model(
                 model_path,
                 custom_objects={
@@ -177,7 +178,8 @@ def load_age_gender_model(repo_id):
             )
             return {"type": "keras", "model": model, "input_size": (64, 64)}
         except Exception as e:
-            st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+            with st.sidebar:
+                st.warning(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
             return None
     else:
         # Model 2: OpenCV DNN (AjaySharma/genderDetection)
@@ -189,15 +191,6 @@ def load_age_gender_model(repo_id):
             age_caffemodel = hf_hub_download(repo_id=repo_id, filename="age_net.caffemodel")
             gender_prototxt = hf_hub_download(repo_id=repo_id, filename="gender_deploy.prototxt")
             gender_caffemodel = hf_hub_download(repo_id=repo_id, filename="gender_net.caffemodel")
-            
-            # Debug: Confirm file downloads
-            st.write(f"Downloaded files for {repo_id}:")
-            st.write(f"Face PB: {face_pb}")
-            st.write(f"Face PBTXT: {face_pbtxt}")
-            st.write(f"Age Prototxt: {age_prototxt}")
-            st.write(f"Age Caffemodel: {age_caffemodel}")
-            st.write(f"Gender Prototxt: {gender_prototxt}")
-            st.write(f"Gender Caffemodel: {gender_caffemodel}")
             
             # Load networks
             face_net = cv2.dnn.readNet(face_pb, face_pbtxt)
@@ -212,7 +205,8 @@ def load_age_gender_model(repo_id):
                 "input_size": (227, 227)
             }
         except Exception as e:
-            st.error(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled.")
+            with st.sidebar:
+                st.warning(f"Error loading {repo_id}: {str(e)}. Age and gender detection disabled for Model 2.")
             return None
 
 # Load models
@@ -246,29 +240,25 @@ def predict_age_gender_opencv(face_img, model_data):
     try:
         h, w = face_img.shape[:2]
         if h < 10 or w < 10:
-            raise ValueError("Face crop too small for prediction")
+            return "unknown", "unknown"
         blob = cv2.dnn.blobFromImage(face_img, 1.0, (227, 227), (78.4263377603, 87.7689143744, 114.895847746), swapRB=False)
-        st.write(f"Blob shape: {blob.shape}")
         
         # Gender prediction
         gender_net = model_data["gender_net"]
         gender_net.setInput(blob)
         gender_preds = gender_net.forward()
-        st.write(f"Gender preds shape: {gender_preds.shape}")
-        gender_conf = gender_preds[0]
-        gender = 'Male' if gender_conf[0] > gender_conf[1] else 'Female'  # 0: Male, 1: Female
+        gender = 'Male' if gender_preds[0][0] > gender_preds[0][1] else 'Female'  # 0: Male, 1: Female
         
         # Age prediction
         age_net = model_data["age_net"]
         age_net.setInput(blob)
         age_preds = age_net.forward()
-        st.write(f"Age preds shape: {age_preds.shape}")
         age_class = np.argmax(age_preds[0])
         age = get_age_range_model2(age_class)
         
         return age, gender
-    except Exception as e:
-        raise Exception(f"OpenCV DNN prediction error: {str(e)}")
+    except Exception:
+        return "unknown", "unknown"
 
 def process_single_image(img, mirror=False):
     if age_gender_model is None:
@@ -278,7 +268,6 @@ def process_single_image(img, mirror=False):
     
     if mirror:
         img = cv2.flip(img, 1)
-        st.write("Mirroring applied to snap image.")
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
@@ -312,25 +301,16 @@ def process_single_image(img, mirror=False):
             face_resize = face_resize / 255.0
             face_input = np.expand_dims(face_resize, axis=0)
             try:
-                st.write(f"Input shape for prediction: {face_input.shape}")
                 age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
-                st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                 age_value = float(age_pred[0][0])
                 age = get_age_range_model1(int(age_value))
                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-            except Exception as e:
-                st.error(f"Prediction error: {str(e)}")
-                age = "error"
-                gender = "error"
+            except Exception:
+                age = "unknown"
+                gender = "unknown"
         else:
             # Model 2: OpenCV DNN
-            try:
-                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
-                st.write(f"Predicted Age Range: {age}, Gender: {gender}")
-            except Exception as e:
-                st.error(f"Prediction error: {str(e)}")
-                age = "error"
-                gender = "error"
+            age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
 
         return img, emotion, age, gender
 
@@ -363,7 +343,8 @@ if mode == "Video Mode":
             if len(faces) == 0:
                 self.no_face_count += 1
                 if self.no_face_count % 30 == 0:
-                    st.warning("No faces detected in the frame.")
+                    with st.sidebar:
+                        st.warning("No faces detected in the frame.")
                 age = self.last_age
                 gender = self.last_gender
                 emotion = self.last_emotion
@@ -394,29 +375,18 @@ if mode == "Video Mode":
                             face_resize = face_resize / 255.0
                             face_input = np.expand_dims(face_resize, axis=0)
                             try:
-                                st.write(f"Input shape for prediction: {face_input.shape}")
                                 age_pred, gender_pred = age_gender_model["model"].predict(face_input, verbose=0)
-                                st.write(f"Age prediction shape: {age_pred.shape}, Gender prediction shape: {gender_pred.shape}")
                                 age_value = float(age_pred[0][0])
                                 self.age_buffer.append(age_value)
                                 smoothed_age = int(np.mean(self.age_buffer))
                                 age = get_age_range_model1(smoothed_age)
-                                if len(self.age_buffer) == self.age_buffer.maxlen:
-                                    st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
                                 gender = "Female" if gender_pred[0][0] > 0.5 else "Male"
-                            except Exception as e:
-                                st.error(f"Prediction error: {str(e)}")
-                                age = "error"
-                                gender = "error"
+                            except Exception:
+                                age = "unknown"
+                                gender = "unknown"
                         else:
                             # Model 2: OpenCV DNN
-                            try:
-                                age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
-                                st.write(f"Predicted Age Range: {age}, Gender: {gender}")
-                            except Exception as e:
-                                st.error(f"Prediction error: {str(e)}")
-                                age = "error"
-                                gender = "error"
+                            age, gender = predict_age_gender_opencv(face_crop, age_gender_model)
 
                         self.last_age = age
                         self.last_gender = gender
@@ -466,31 +436,32 @@ if mode == "Video Mode":
             rtc_configuration=rtc_config
         )
     except Exception as e:
-        if "OverconstrainedError" in str(e):
-            st.warning("Please select a device to continue.")
-        else:
-            st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
-            try:
-                webrtc_streamer(
-                    key="emotion-detection-fallback",
-                    video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
-                    media_stream_constraints={
-                        "video": {
-                            "width": {"ideal": resolution["width"]},
-                            "height": {"ideal": resolution["height"]},
-                            "frameRate": {"ideal": fps},
-                            "deviceId": {"exact": 0}
+        with st.sidebar:
+            if "OverconstrainedError" in str(e):
+                st.warning("Please select a device to continue.")
+            else:
+                st.warning(f"Camera 1 failed: {str(e)}. Switching to camera 0.")
+                try:
+                    webrtc_streamer(
+                        key="emotion-detection-fallback",
+                        video_processor_factory=lambda: EmotionProcessor(mirror=mirror_feed),
+                        media_stream_constraints={
+                            "video": {
+                                "width": {"ideal": resolution["width"]},
+                                "height": {"ideal": resolution["height"]},
+                                "frameRate": {"ideal": fps},
+                                "deviceId": {"exact": 0}
+                            },
+                            "audio": False
                         },
-                        "audio": False
-                    },
-                    async_processing=True,
-                    rtc_configuration=rtc_config
-                )
-            except Exception as e2:
-                if "OverconstrainedError" in str(e2):
-                    st.warning("Please select a device to continue.")
-                else:
-                    st.error(f"Camera 0 failed: {str(e2)}.")
+                        async_processing=True,
+                        rtc_configuration=rtc_config
+                    )
+                except Exception as e2:
+                    if "OverconstrainedError" in str(e2):
+                        st.warning("Please select a device to continue.")
+                    else:
+                        st.error(f"Camera 0 failed: {str(e2)}.")
 else:
     st.header("Snap Mode")
     if mirror_snap:
@@ -512,7 +483,8 @@ else:
         processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
         
         if emotion is None or age is None or gender is None:
-            st.warning("No faces detected in the photo.")
+            with st.sidebar:
+                st.warning("No faces detected in the photo.")
         else:
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
             age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
