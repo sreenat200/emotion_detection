@@ -7,9 +7,6 @@ import numpy as np
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 import json
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-from tensorflow.keras.models import load_model
-from tensorflow.keras.losses import MeanSquaredError, BinaryCrossentropy
-from tensorflow.keras.metrics import MeanAbsoluteError, Accuracy
 from collections import deque
 from io import BytesIO
 import os
@@ -71,30 +68,58 @@ class EmotionDetectionCNN(torch.nn.Module, PyTorchModelHubMixin):
         x = self.classifier(x)
         return x
 
+# Age/Gender/Race Model
+class MultiLabelResNet(torch.nn.Module, PyTorchModelHubMixin):
+    def __init__(self, config=None):
+        super(MultiLabelResNet, self).__init__()
+        if config is None:
+            config = {}
+        self.backbone = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=config.get('pretrained', True))
+        self.backbone.fc = torch.nn.Identity()
+        self.gender_head = torch.nn.Sequential(
+            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_gender', 2))
+        )
+        self.race_head = torch.nn.Sequential(
+            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_race', 7))
+        )
+        self.age_head = torch.nn.Sequential(
+            torch.nn.Linear(2048, 512), torch.nn.ReLU(), torch.nn.Dropout(0.5), torch.nn.Linear(512, config.get('num_age', 8))
+        )
+
+    def forward(self, x):
+        features = self.backbone(x)
+        gender_out = self.gender_head(features)
+        race_out = self.race_head(features)
+        age_out = self.age_head(features)
+        return gender_out, race_out, age_out
+
 def get_transform(in_channels):
-    return transforms.Compose([
-        transforms.Resize((48, 48)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,) * in_channels, (0.5,) * in_channels)
-    ])
+    if in_channels == 1:
+        return transforms.Compose([
+            transforms.Resize((48, 48)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+    else:
+        return transforms.Compose([
+            transforms.Resize((224, 224)),  # Match FairFace model's input size
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
-# Define labels for emotion and gender
+# Define labels
 emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-genders = ['Male', 'Female']  # 0: Male, 1: Female
-
-# Define age ranges for age_gender models
+genders = ['Male', 'Female']
+races = ['White', 'Black', 'Latino_Hispanic', 'East_Asian', 'Southeast_Asian', 'Indian', 'Middle_Eastern']
 age_ranges = [
-    (1, 10, "1-10"), (11, 20, "11-20"), (21, 30, "21-30"), (31, 40, "31-40"),
-    (41, 50, "41-50"), (51, 60, "51-60"), (61, 70, "61-70"), (71, 100, "71-100")
+    (0, 2, "0-2"), (4, 6, "4-6"), (8, 13, "8-13"), (15, 20, "15-20"),
+    (21, 30, "21-30"), (31, 45, "31-45"), (46, 60, "46-60"), (60, 100, "60+")
 ]
 
-def get_age_range(age_value):
-    for start, end, range_str in age_ranges:
-        if start <= age_value <= end:
-            return range_str
-    return "unknown"
+def get_age_range(age_idx):
+    return age_ranges[age_idx][2] if 0 <= age_idx < len(age_ranges) else "unknown"
 
-st.markdown("<h3>Live Facial Emotion, Age, and Gender Detection</h3>", unsafe_allow_html=True)
+st.markdown("<h3>Live Facial Emotion, Age, Gender, and Race Detection</h3>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Settings")
@@ -103,12 +128,11 @@ with st.sidebar:
         ["Model 1 (sreenathsree1578/facial_emotion)", "Model 2 (sreenathsree1578/emotion_detection)"],
         index=0
     )
-    age_gender_model_option = st.selectbox(
-        "Select Age/Gender Model",
-        ["Model 1 (sreenathsree1578/UTK_gender_age_model)", "Model 2 (sreenathsree1578/age_gender)"],
-        index=0
-    )
-    detect_age_gender = st.checkbox("Detect Age and Gender", value=True)
+    detect_age_gender_race = st.checkbox("Detect Age, Gender, and Race", value=True)
+    if detect_age_gender_race:
+        age_detection = st.checkbox("Detect Age", value=True)
+        gender_detection = st.checkbox("Detect Gender", value=True)
+        race_detection = st.checkbox("Detect Race", value=True)
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
         quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
@@ -154,23 +178,17 @@ def load_emotion_detection_model():
         return EmotionDetectionCNN(num_classes=7, in_channels=3), 3
 
 @st.cache_resource
-def load_age_gender_model(repo_id):
+def load_fairface_model():
     try:
-        model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
-        model = load_model(
-            model_path,
-            custom_objects={
-                'mse': MeanSquaredError(),
-                'MeanSquaredError': MeanSquaredError(),
-                'binary_crossentropy': BinaryCrossentropy(),
-                'mae': MeanAbsoluteError(),
-                'accuracy': Accuracy()
-            }
-        )
-        st.success(f"Successfully loaded {repo_id}.")
+        config_path = hf_hub_download(repo_id="sreenathsree1578/UTK_gender_age_model", filename="config.json")
+        with open(config_path) as f:
+            config = json.load(f)
+        model = MultiLabelResNet(config=config)
+        model = model.from_pretrained("sreenathsree1578/UTK_gender_age_model")
+        model.eval()
         return model
     except Exception as e:
-        st.error(f"Failed to load {repo_id}: {str(e)}. Age and gender detection disabled.")
+        st.error(f"Failed to load sreenathsree1578/UTK_gender_age_model: {str(e)}. Age, gender, and race detection disabled.")
         return None
 
 # Load models
@@ -178,37 +196,15 @@ if model_option.startswith("Model 1"):
     emotion_model, in_channels = load_facial_emotion_model()
 else:
     emotion_model, in_channels = load_emotion_detection_model()
-age_gender_model = load_age_gender_model("sreenathsree1578/UTK_gender_age_model" if age_gender_model_option.startswith("Model 1") else "sreenathsree1578/age_gender") if detect_age_gender else None
+age_gender_race_model = load_fairface_model() if detect_age_gender_race else None
 
 transform_live = get_transform(in_channels)
 
-emotion_colors = {
-    'angry': (0, 0, 255),
-    'disgust': (0, 255, 0),
-    'fear': (255, 0, 0),
-    'happy': (0, 255, 0),
-    'sad': (0, 165, 255),
-    'surprise': (0, 255, 255),
-    'neutral': (255, 0, 0)
-}
+emotion_colors = {'angry': (0, 0, 255), 'disgust': (0, 255, 0), 'fear': (255, 0, 0), 'happy': (0, 255, 0),
+                  'sad': (0, 165, 255), 'surprise': (0, 255, 255), 'neutral': (255, 0, 0)}
 age_color = (200, 0, 200)
-gender_colors = {
-    'Female': (255, 0, 255),
-    'Male': (0, 0, 255)
-}
-
-def get_model_info(model):
-    if model is None:
-        return "unknown", (64, 64), 2
-    try:
-        input_shape = model.input_shape
-        img_size = input_shape[1:3] if len(input_shape) == 4 else (64, 64)
-        output_shape = model.output_shape
-        num_outputs = len(output_shape) if isinstance(output_shape, list) else 1
-        repo_id = "sreenathsree1578/UTK_gender_age_model" if age_gender_model_option.startswith("Model 1") else "sreenathsree1578/age_gender"
-        return repo_id, img_size, num_outputs
-    except:
-        return "unknown", (64, 64), 2
+gender_colors = {'Female': (255, 0, 255), 'Male': (0, 0, 255)}
+race_colors = {race: (50 + i * 30, 50 + i * 20, 50 + i * 10) for i, race in enumerate(races)}
 
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -222,7 +218,7 @@ def process_single_image(img, mirror=False):
 
     if len(faces) == 0:
         st.warning("No faces detected in the image.")
-        return img, None, None, None
+        return img, None, None, None, None
 
     for (x, y, w, h) in faces:
         # Emotion detection
@@ -239,53 +235,28 @@ def process_single_image(img, mirror=False):
             _, pred_emotion = torch.max(output_emotion, 1)
             emotion = emotions[pred_emotion.item()] if pred_emotion.item() < len(emotions) else "unknown"
 
-        # Age and Gender detection
+        # Age, Gender, Race detection
         age = "unknown"
         gender = "unknown"
-        if detect_age_gender and age_gender_model is not None:
-            model_type, img_size, num_outputs = get_model_info(age_gender_model)
-            face_age_gender = img[y:y+h, x:x+w]
-            face_age_gender = cv2.resize(face_age_gender, img_size)
-            if len(face_age_gender.shape) == 2:
-                face_age_gender = cv2.cvtColor(face_age_gender, cv2.COLOR_GRAY2RGB)
-            face_age_gender = face_age_gender.astype(np.float32) / 255.0
-            face_age_gender = np.expand_dims(face_age_gender, axis=0)
-            try:
-                predictions = age_gender_model.predict(face_age_gender, verbose=0)
-                st.write(f"Model: {model_type}, Predictions shape: {np.array(predictions).shape}")
-                
-                # Handle different output formats
-                if model_type == "sreenathsree1578/UTK_gender_age_model":
-                    if len(predictions) == 2:
-                        age_value = float(predictions[0][0]) * 116  # Assuming UTK model outputs normalized age (0-1)
-                        gender_prob = float(predictions[1][0])
-                    else:
-                        st.error("Unexpected output shape for UTK model.")
-                        age = "error"
-                        gender = "error"
-                        return img, emotion, age, gender
-                else:
-                    age_value = float(predictions[0][0])
-                    gender_prob = float(predictions[1][0][0])
-                
-                st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
-                if age_value < 0 or age_value > 116:
-                    st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
-                    age = "unknown"
-                else:
-                    age = get_age_range(int(age_value))
-                gender = "Female" if gender_prob > 0.5 else "Male"
-                if not 0 <= gender_prob <= 1:
-                    st.warning(f"Invalid gender probability: {gender_prob:.3f}. Setting to 'unknown'.")
-                    gender = "unknown"
-            except Exception as e:
-                st.error(f"Prediction error: {str(e)}")
-                age = "error"
-                gender = "error"
+        race = "unknown"
+        if detect_age_gender_race and age_gender_race_model is not None:
+            face_aggr = img[y:y+h, x:x+w]
+            face_aggr = cv2.resize(face_aggr, (224, 224))  # Match FairFace input size
+            face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
+            face_aggr_pil = Image.fromarray(face_aggr_rgb)
+            face_aggr_tensor = transform_live(face_aggr_pil).unsqueeze(0)
+            with torch.no_grad():
+                gender_out, race_out, age_out = age_gender_race_model(face_aggr_tensor)
+                _, gender_pred = torch.max(gender_out, 1)
+                _, race_pred = torch.max(race_out, 1)
+                _, age_pred = torch.max(age_out, 1)
+                gender = genders[gender_pred.item()] if gender_pred.item() < len(genders) else "unknown"
+                race = races[race_pred.item()] if race_pred.item() < len(races) else "unknown"
+                age = get_age_range(age_pred.item()) if age_pred.item() < len(age_ranges) else "unknown"
 
-        return img, emotion, age, gender
+        return img, emotion, age, gender, race
 
-    return img, None, None, None
+    return img, None, None, None, None
 
 if mode == "Video Mode":
     resolution = quality_map[quality]
@@ -299,8 +270,8 @@ if mode == "Video Mode":
             self.frame_count = 0
             self.last_age = "unknown"
             self.last_gender = "unknown"
+            self.last_race = "unknown"
             self.last_emotion = "unknown"
-            self.model_type, self.img_size, self.num_outputs = get_model_info(age_gender_model)
 
         def recv(self, frame):
             self.frame_count += 1
@@ -318,6 +289,7 @@ if mode == "Video Mode":
                     st.warning("No faces detected in the frame.")
                 age = self.last_age
                 gender = self.last_gender
+                race = self.last_race
                 emotion = self.last_emotion
             else:
                 self.no_face_count = 0
@@ -338,52 +310,30 @@ if mode == "Video Mode":
 
                         age = "unknown"
                         gender = "unknown"
-                        if detect_age_gender and age_gender_model is not None:
-                            face_age_gender = img[y:y+h, x:x+w]
-                            face_age_gender = cv2.resize(face_age_gender, self.img_size)
-                            if len(face_age_gender.shape) == 2:
-                                face_age_gender = cv2.cvtColor(face_age_gender, cv2.COLOR_GRAY2RGB)
-                            face_age_gender = face_age_gender.astype(np.float32) / 255.0
-                            face_age_gender = np.expand_dims(face_age_gender, axis=0)
-                            try:
-                                predictions = age_gender_model.predict(face_age_gender, verbose=0)
-                                if self.model_type == "sreenathsree1578/UTK_gender_age_model":
-                                    if len(predictions) == 2:
-                                        age_value = float(predictions[0][0]) * 116
-                                        gender_prob = float(predictions[1][0])
-                                    else:
-                                        st.error("Unexpected output shape for UTK model.")
-                                        age = "error"
-                                        gender = "error"
-                                        return frame.from_ndarray(img, format="bgr24")
-                                else:
-                                    age_value = float(predictions[0][0])
-                                    gender_prob = float(predictions[1][0][0])
-                                st.write(f"Raw Age: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
-                                if age_value < 0 or age_value > 116:
-                                    st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
-                                    age = "unknown"
-                                else:
-                                    self.age_buffer.append(age_value)
-                                    smoothed_age = int(np.mean(self.age_buffer))
-                                    age = get_age_range(smoothed_age)
-                                    if len(self.age_buffer) == self.age_buffer.maxlen:
-                                        st.write(f"Raw Age: {age_value:.1f}, Smoothed Age Range: {age}")
-                                gender = "Female" if gender_prob > 0.5 else "Male"
-                                if not 0 <= gender_prob <= 1:
-                                    st.warning(f"Invalid gender probability: {gender_prob:.3f}. Setting to 'unknown'.")
-                                    gender = "unknown"
-                            except Exception as e:
-                                st.error(f"Prediction error: {str(e)}")
-                                age = "error"
-                                gender = "error"
+                        race = "unknown"
+                        if detect_age_gender_race and age_gender_race_model is not None:
+                            face_aggr = img[y:y+h, x:x+w]
+                            face_aggr = cv2.resize(face_aggr, (224, 224))
+                            face_aggr_rgb = cv2.cvtColor(face_aggr, cv2.COLOR_BGR2RGB)
+                            face_aggr_pil = Image.fromarray(face_aggr_rgb)
+                            face_aggr_tensor = transform_live(face_aggr_pil).unsqueeze(0)
+                            with torch.no_grad():
+                                gender_out, race_out, age_out = age_gender_race_model(face_aggr_tensor)
+                                _, gender_pred = torch.max(gender_out, 1)
+                                _, race_pred = torch.max(race_out, 1)
+                                _, age_pred = torch.max(age_out, 1)
+                                gender = genders[gender_pred.item()] if gender_pred.item() < len(genders) else "unknown"
+                                race = races[race_pred.item()] if race_pred.item() < len(races) else "unknown"
+                                age = get_age_range(age_pred.item()) if age_pred.item() < len(age_ranges) else "unknown"
 
                         self.last_age = age
                         self.last_gender = gender
+                        self.last_race = race
                         self.last_emotion = emotion
                     else:
                         age = self.last_age
                         gender = self.last_gender
+                        race = self.last_race
                         emotion = self.last_emotion
 
                     cv2.rectangle(img, (x, y), (x+w, y+h), (255, 255, 255), 2)
@@ -393,16 +343,22 @@ if mode == "Video Mode":
                     cv2.rectangle(img, (x, y-75), (x+text_size_emotion[0], y-45), (255, 255, 255), -1)
                     cv2.putText(img, emotion, (x, y-50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, emotion_color, 2)
 
-                    if detect_age_gender:
-                        age_text = f"Age: {age}"
-                        text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                        cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
-                        cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
-
-                        gender_color = gender_colors.get(gender, (255, 0, 0))
-                        text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                        cv2.rectangle(img, (x, y-15), (x+text_size_gender[0], y+15), (255, 255, 255), -1)
-                        cv2.putText(img, gender, (x, y+10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                    if detect_age_gender_race:
+                        if age_detection:
+                            age_text = f"Age: {age}"
+                            text_size_age = cv2.getTextSize(age_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                            cv2.rectangle(img, (x, y-45), (x+text_size_age[0], y-15), (255, 255, 255), -1)
+                            cv2.putText(img, age_text, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, age_color, 2)
+                        if gender_detection:
+                            gender_color = gender_colors.get(gender, (255, 0, 0))
+                            text_size_gender = cv2.getTextSize(gender, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                            cv2.rectangle(img, (x, y-15 if not age_detection else y+15), (x+text_size_gender[0], y+15 if not age_detection else y+45), (255, 255, 255), -1)
+                            cv2.putText(img, gender, (x, y+10 if not age_detection else y+40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, gender_color, 2)
+                        if race_detection:
+                            race_color = race_colors.get(race, (255, 0, 0))
+                            text_size_race = cv2.getTextSize(race, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                            cv2.rectangle(img, (x, y+15 if not (age_detection or gender_detection) else y+45), (x+text_size_race[0], y+45 if not (age_detection or gender_detection) else y+75), (255, 255, 255), -1)
+                            cv2.putText(img, race, (x, y+40 if not (age_detection or gender_detection) else y+70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, race_color, 2)
 
             return frame.from_ndarray(img, format="bgr24")
 
@@ -470,16 +426,21 @@ else:
         image_pil = Image.open(BytesIO(image.getvalue()))
         img_rgb = np.array(image_pil)
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-        processed_img, emotion, age, gender = process_single_image(img_bgr, mirror=mirror_snap)
+        processed_img, emotion, age, gender, race = process_single_image(img_bgr, mirror=mirror_snap)
         
-        if emotion is None or (detect_age_gender and (age is None or gender is None)):
+        if emotion is None or (detect_age_gender_race and (age is None or gender is None or race is None)):
             st.warning("No faces detected in the photo.")
         else:
             emotion_color_hex = '#{:02x}{:02x}{:02x}'.format(*emotion_colors.get(emotion, (255, 0, 0)))
             output = f"**Emotion**: <span style=\"color: {emotion_color_hex}\">{emotion}</span><br>"
-            if detect_age_gender:
-                age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
-                gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
-                output += f"**Age**: <span style=\"color: {age_color_hex}\">{age}</span><br>"
-                output += f"**Gender**: <span style=\"color: {gender_color_hex}\">{gender}</span>"
+            if detect_age_gender_race:
+                if age_detection:
+                    age_color_hex = '#{:02x}{:02x}{:02x}'.format(*age_color)
+                    output += f"**Age**: <span style=\"color: {age_color_hex}\">{age}</span><br>"
+                if gender_detection:
+                    gender_color_hex = '#{:02x}{:02x}{:02x}'.format(*gender_colors.get(gender, (255, 0, 0)))
+                    output += f"**Gender**: <span style=\"color: {gender_color_hex}\">{gender}</span><br>"
+                if race_detection:
+                    race_color_hex = '#{:02x}{:02x}{:02x}'.format(*race_colors.get(race, (255, 0, 0)))
+                    output += f"**Race**: <span style=\"color: {race_color_hex}\">{race}</span>"
             st.markdown(output, unsafe_allow_html=True)
