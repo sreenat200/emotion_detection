@@ -20,7 +20,7 @@ class SimpleCNN(torch.nn.Module, PyTorchModelHubMixin):
         self.features = torch.nn.Sequential(
             torch.nn.Conv2d(in_channels, 32, 3, padding=1),
             torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2, 2),
+            torch.nn.MaxPool3d(2, 2),
             torch.nn.Conv2d(32, 64, 3, padding=1),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(2, 2),
@@ -176,7 +176,7 @@ if model_option == "Model 1":
 else:
     emotion_model, in_channels = load_emotion_detection_model()
 age_gender_model = load_age_gender_model(
-    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "abhilash88/age-gender-prediction"
+    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender"
 )
 
 transform_live = get_transform(in_channels)
