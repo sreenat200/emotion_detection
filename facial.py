@@ -164,6 +164,7 @@ def load_age_gender_model(repo_id):
         # Model 1: Keras .h5
         try:
             model_path = hf_hub_download(repo_id=repo_id, filename="age_gender_model.h5")
+            st.write(f"Downloaded Keras model: {model_path}")
             model = load_model(
                 model_path,
                 custom_objects={
@@ -188,6 +189,15 @@ def load_age_gender_model(repo_id):
             age_caffemodel = hf_hub_download(repo_id=repo_id, filename="age_net.caffemodel")
             gender_prototxt = hf_hub_download(repo_id=repo_id, filename="gender_deploy.prototxt")
             gender_caffemodel = hf_hub_download(repo_id=repo_id, filename="gender_net.caffemodel")
+            
+            # Debug: Confirm file downloads
+            st.write(f"Downloaded files for {repo_id}:")
+            st.write(f"Face PB: {face_pb}")
+            st.write(f"Face PBTXT: {face_pbtxt}")
+            st.write(f"Age Prototxt: {age_prototxt}")
+            st.write(f"Age Caffemodel: {age_caffemodel}")
+            st.write(f"Gender Prototxt: {gender_prototxt}")
+            st.write(f"Gender Caffemodel: {gender_caffemodel}")
             
             # Load networks
             face_net = cv2.dnn.readNet(face_pb, face_pbtxt)
@@ -233,23 +243,32 @@ gender_colors = {
 
 def predict_age_gender_opencv(face_img, model_data):
     """Predict age and gender using OpenCV DNN for Model 2."""
-    h, w = face_img.shape[:2]
-    blob = cv2.dnn.blobFromImage(face_img, 1.0, (227, 227), (78.4263377603, 87.7689143744, 114.895847746), swapRB=False)
-    
-    # Gender prediction
-    gender_net.setInput(blob)
-    gender_preds = gender_net.forward()
-    gender_conf = gender_preds[0][0]
-    gender = 'Male' if gender_conf < 0.5 else 'Female'  # Assuming 0: Male, 1: Female
-    
-    # Age prediction
-    age_net.setInput(blob)
-    age_preds = age_net.forward()
-    age_conf = age_preds[0]
-    age_class = np.argmax(age_conf)
-    age = get_age_range_model2(age_class)
-    
-    return age, gender
+    try:
+        h, w = face_img.shape[:2]
+        if h < 10 or w < 10:
+            raise ValueError("Face crop too small for prediction")
+        blob = cv2.dnn.blobFromImage(face_img, 1.0, (227, 227), (78.4263377603, 87.7689143744, 114.895847746), swapRB=False)
+        st.write(f"Blob shape: {blob.shape}")
+        
+        # Gender prediction
+        gender_net = model_data["gender_net"]
+        gender_net.setInput(blob)
+        gender_preds = gender_net.forward()
+        st.write(f"Gender preds shape: {gender_preds.shape}")
+        gender_conf = gender_preds[0]
+        gender = 'Male' if gender_conf[0] > gender_conf[1] else 'Female'  # 0: Male, 1: Female
+        
+        # Age prediction
+        age_net = model_data["age_net"]
+        age_net.setInput(blob)
+        age_preds = age_net.forward()
+        st.write(f"Age preds shape: {age_preds.shape}")
+        age_class = np.argmax(age_preds[0])
+        age = get_age_range_model2(age_class)
+        
+        return age, gender
+    except Exception as e:
+        raise Exception(f"OpenCV DNN prediction error: {str(e)}")
 
 def process_single_image(img, mirror=False):
     if age_gender_model is None:
