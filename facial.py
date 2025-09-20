@@ -176,7 +176,7 @@ if model_option == "Model 1":
 else:
     emotion_model, in_channels = load_emotion_detection_model()
 age_gender_model = load_age_gender_model(
-    "sreenathsree1578/UTK_gender_age_model" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender"
+    "sreenathsree1578/UTK_trained_model" if age_gender_model_option == "Model 1" else "sreenathsree1578/age_gender"
 )
 
 transform_live = get_transform(in_channels)
@@ -229,7 +229,7 @@ def process_single_image(img, mirror=False):
         gender = "unknown"
         if age_gender_model is not None:
             face_age_gender = img[y:y+h, x:x+w]
-            # Use 128x128 for Model 1 (UTK_gender_age_model), 64x64 for Model 2
+            # Use 128x128 for Model 1 (UTK_trained_model), 64x64 for Model 2
             resize_size = (128, 128) if age_gender_model_option == "Model 1" else (64, 64)
             face_age_gender = cv2.resize(face_age_gender, resize_size)
             face_age_gender = face_age_gender / 255.0
@@ -300,7 +300,7 @@ if mode == "Video Mode":
                         gender = "unknown"
                         if age_gender_model is not None:
                             face_age_gender = img[y:y+h, x:x+w]
-                            # Use 128x128 for Model 1 (UTK_gender_age_model), 64x64 for Model 2
+                            # Use 128x128 for Model 1 (UTK_trained_model), 64x64 for Model 2
                             resize_size = (128, 128) if age_gender_model_option == "Model 1" else (64, 64)
                             face_age_gender = cv2.resize(face_age_gender, resize_size)
                             face_age_gender = face_age_gender / 255.0
@@ -427,3 +427,7 @@ else:
                 """,
                 unsafe_allow_html=True
             )
+
+# Display the processed image in Snap Mode
+if mode == "Snap Mode" and image is not None and processed_img is not None:
+    st.image(processed_img, channels="BGR", caption="Processed Image")
