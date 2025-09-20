@@ -199,21 +199,16 @@ gender_colors = {
 
 def get_model_info(model):
     if model is None:
-        return "fairface", (64, 64), 2
+        return "unknown", (64, 64), 2
     try:
         input_shape = model.input_shape
         img_size = input_shape[1:3] if len(input_shape) == 4 else (64, 64)
         output_shape = model.output_shape
-        if isinstance(output_shape, list):
-            num_outputs = len(output_shape)
-        else:
-            num_outputs = len(output_shape) if hasattr(output_shape, '__len__') else 1
-        if num_outputs == 2:
-            return "fairface", img_size, num_outputs
-        else:
-            return "UTK", img_size, num_outputs
+        num_outputs = len(output_shape) if isinstance(output_shape, list) else 1
+        repo_id = "sreenathsree1578/UTK_gender_age_model" if age_gender_model_option.startswith("Model 1") else "sreenathsree1578/age_gender"
+        return repo_id, img_size, num_outputs
     except:
-        return "fairface", (64, 64), 2
+        return "unknown", (64, 64), 2
 
 def process_single_image(img, mirror=False):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -257,13 +252,22 @@ def process_single_image(img, mirror=False):
             face_age_gender = np.expand_dims(face_age_gender, axis=0)
             try:
                 predictions = age_gender_model.predict(face_age_gender, verbose=0)
-                st.write(f"Model type: {model_type}, Predictions shape: {np.array(predictions).shape}")
-                if model_type == "UTK":
-                    age_value = float(predictions[0][0])
-                    gender_prob = float(predictions[1][0])
+                st.write(f"Model: {model_type}, Predictions shape: {np.array(predictions).shape}")
+                
+                # Handle different output formats
+                if model_type == "sreenathsree1578/UTK_gender_age_model":
+                    if len(predictions) == 2:
+                        age_value = float(predictions[0][0]) * 116  # Assuming UTK model outputs normalized age (0-1)
+                        gender_prob = float(predictions[1][0])
+                    else:
+                        st.error("Unexpected output shape for UTK model.")
+                        age = "error"
+                        gender = "error"
+                        return img, emotion, age, gender
                 else:
                     age_value = float(predictions[0][0])
                     gender_prob = float(predictions[1][0][0])
+                
                 st.write(f"Raw Age Prediction: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
                 if age_value < 0 or age_value > 116:
                     st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
@@ -296,11 +300,7 @@ if mode == "Video Mode":
             self.last_age = "unknown"
             self.last_gender = "unknown"
             self.last_emotion = "unknown"
-            self.model_type = "fairface"
-            self.img_size = (64, 64)
-            self.num_outputs = 2
-            if age_gender_model is not None:
-                self.model_type, self.img_size, self.num_outputs = get_model_info(age_gender_model)
+            self.model_type, self.img_size, self.num_outputs = get_model_info(age_gender_model)
 
         def recv(self, frame):
             self.frame_count += 1
@@ -347,12 +347,19 @@ if mode == "Video Mode":
                             face_age_gender = np.expand_dims(face_age_gender, axis=0)
                             try:
                                 predictions = age_gender_model.predict(face_age_gender, verbose=0)
-                                if self.model_type == "UTK":
-                                    age_value = float(predictions[0][0])
-                                    gender_prob = float(predictions[1][0])
+                                if self.model_type == "sreenathsree1578/UTK_gender_age_model":
+                                    if len(predictions) == 2:
+                                        age_value = float(predictions[0][0]) * 116
+                                        gender_prob = float(predictions[1][0])
+                                    else:
+                                        st.error("Unexpected output shape for UTK model.")
+                                        age = "error"
+                                        gender = "error"
+                                        return frame.from_ndarray(img, format="bgr24")
                                 else:
                                     age_value = float(predictions[0][0])
                                     gender_prob = float(predictions[1][0][0])
+                                st.write(f"Raw Age: {age_value:.1f}, Raw Gender Probability: {gender_prob:.3f}")
                                 if age_value < 0 or age_value > 116:
                                     st.warning(f"Invalid age prediction: {age_value:.1f}. Setting to 'unknown'.")
                                     age = "unknown"
