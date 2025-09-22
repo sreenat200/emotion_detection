@@ -109,7 +109,7 @@ with st.sidebar:
         ["Model 1", "Model 2"],
         index=0
     )
-    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=True)
+    enable_age_gender = st.checkbox("Enable Age/Gender Detection", value=False)
     if enable_age_gender:
         age_gender_model_option = st.selectbox(
             "Select Age/Gender Model",
