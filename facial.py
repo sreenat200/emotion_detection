@@ -118,8 +118,8 @@ with st.sidebar:
         )
     mode = st.selectbox("Select Mode", ["Video Mode", "Snap Mode"], index=0)
     if mode == "Video Mode":
-        quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=0)
-        fps = st.selectbox("Select FPS", [15, 30, 60], index=0)
+        quality = st.selectbox("Select Video Quality", ["Low (480p)", "Medium (720p)", "High (1080p)"], index=1)
+        fps = st.selectbox("Select FPS", [15, 30, 60], index=1)
         mirror_feed = st.checkbox("Mirror Video Feed", value=True)
     else:
         mirror_snap = st.checkbox("Mirror Snap Image", value=True)
